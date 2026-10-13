@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Matchup Lab — Weekly Fantasy Football Projections</title>
+<meta name="description" content="Weekly fantasy football projections built from player usage, efficiency, and opponent defensive tendencies, with probability ranges and a Top 20 board." />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2314171c'/%3E%3Cellipse cx='16' cy='16' rx='11' ry='6.5' transform='rotate(-35 16 16)' fill='none' stroke='%237ddc5a' stroke-width='2.2'/%3E%3Cpath d='M12 20 L20 12 M13.5 15.5l1.6 1.6M15.5 13.5l1.6 1.6M17.5 11.5l1.6 1.6' stroke='%237ddc5a' stroke-width='1.8' stroke-linecap='round'/%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://api.fontshare.com" crossorigin />
+<link href="https://api.fontshare.com/v2/css?f[]=cabinet-grotesk@700,800&f[]=satoshi@400,500,700&display=swap" rel="stylesheet" media="print" onload="this.media='all'" />
+<noscript><link href="https://api.fontshare.com/v2/css?f[]=cabinet-grotesk@700,800&f[]=satoshi@400,500,700&display=swap" rel="stylesheet" /></noscript>
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="apple-touch-icon" href="apple-touch-icon.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-title" content="Matchup Lab" />
+<meta name="theme-color" content="#14171c" />
+<link rel="stylesheet" href="styles.css?v=942696c71c" />
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <a class="brand" href="#" id="brandLink" aria-label="Matchup Lab home">
+      <svg class="logo" viewBox="0 0 32 32" aria-label="Matchup Lab logo" fill="none">
+        <rect x="1" y="1" width="30" height="30" rx="7" stroke="currentColor" stroke-width="1.5" />
+        <ellipse cx="16" cy="16" rx="11" ry="6.5" transform="rotate(-35 16 16)" stroke="currentColor" stroke-width="2" />
+        <path d="M12 20 L20 12 M13.5 15.5l1.6 1.6M15.5 13.5l1.6 1.6M17.5 11.5l1.6 1.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+      </svg>
+      <span class="brand-name">Matchup Lab</span>
+    </a>
+
+    <div class="search" role="search">
+      <svg class="search-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="9" cy="9" r="6" stroke="currentColor" stroke-width="1.8"/><path d="M13.5 13.5L18 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      <input id="searchInput" type="search" placeholder="Type a player name… (e.g. Jahmyr Gibbs)" autocomplete="off" aria-label="Search players" aria-controls="searchResults" aria-expanded="false" />
+      <ul id="searchResults" class="search-results" role="listbox" hidden></ul>
+    </div>
+
+    <div class="controls">
+      <label class="control">
+        <span class="control-label">Week</span>
+        <select id="weekSelect" aria-label="Week"></select>
+      </label>
+      <div class="control">
+        <span class="control-label">Scoring</span>
+        <div class="segmented" id="scoringSeg" role="radiogroup" aria-label="Scoring format">
+          <button type="button" role="radio" data-val="ppr" aria-checked="true">PPR</button>
+          <button type="button" role="radio" data-val="half" aria-checked="false">Half</button>
+          <button type="button" role="radio" data-val="std" aria-checked="false">Std</button>
+        </div>
+      </div>
+      <button id="themeToggle" class="icon-btn" type="button" aria-label="Toggle dark mode">
+        <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <nav class="tabs" aria-label="Views">
+    <button class="tab is-active" data-view="board" type="button">Top 20 Board</button>
+    <button class="tab" data-view="team" type="button">My Team</button>
+    <button class="tab" data-view="player" type="button" id="playerTab" disabled>Player</button>
+    <button class="tab" data-view="compare" type="button">Compare</button>
+    <button class="tab" data-view="defense" type="button">Defenses</button>
+    <button class="tab" data-view="method" type="button">How it works</button>
+  </nav>
+
+  <main class="main" id="main">
+    <!-- BOARD -->
+    <section class="view" id="view-board">
+      <div class="view-head">
+        <div>
+          <h1 class="page-title">Top 20 · <span id="boardWeekLabel">Week 6</span></h1>
+          <p class="sub" id="boardSub">Expected fantasy points vs. this week's opponent, ranked across all positions.</p>
+        </div>
+        <div class="board-filters">
+          <div class="segmented" id="posSeg" role="radiogroup" aria-label="Position filter">
+            <button type="button" role="radio" data-val="ALL" aria-checked="true">All</button>
+            <button type="button" role="radio" data-val="QB" aria-checked="false">QB</button>
+            <button type="button" role="radio" data-val="RB" aria-checked="false">RB</button>
+            <button type="button" role="radio" data-val="WR" aria-checked="false">WR</button>
+            <button type="button" role="radio" data-val="TE" aria-checked="false">TE</button>
+          </div>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="board" id="boardTable">
+          <thead>
+            <tr>
+              <th class="num">#</th>
+              <th>Player</th>
+              <th>Matchup · Vegas</th>
+              <th>Key prop</th>
+              <th>Opportunity</th>
+              <th class="num">Proj</th>
+              <th class="num">P10–P90</th>
+              <th class="num">Boom / Bust</th>
+              <th>Flags</th>
+            </tr>
+          </thead>
+          <tbody id="boardBody"></tbody>
+        </table>
+      </div>
+      <p class="sub board-note" id="boardMarketNote"></p>
+      <div id="boardExtras"></div>
+    </section>
+
+    <!-- MY TEAM -->
+    <section class="view" id="view-team" hidden></section>
+
+    <!-- PLAYER -->
+    <section class="view" id="view-player" hidden></section>
+
+    <!-- COMPARE -->
+    <section class="view" id="view-compare" hidden></section>
+
+    <!-- DEFENSE -->
+    <section class="view" id="view-defense" hidden>
+      <div class="view-head">
+        <div>
+          <h1 class="page-title">Defensive tendencies</h1>
+          <p class="sub">Per-game stats allowed through <span id="defThroughWeek"></span>. Rank 1 = toughest, 32 = most generous. Click a column to sort.</p>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="deftable" id="defTable">
+          <thead id="defHead"></thead>
+          <tbody id="defBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- METHOD -->
+    <section class="view" id="view-method" hidden>
+      <div class="view-head"><div><h1 class="page-title">How projections work</h1><p class="sub">A transparent, usage-first model. No black box.</p></div></div>
+      <div class="method-grid">
+        <article class="card">
+          <h2 class="card-title">Priority order</h2>
+          <p>Every projection and start/sit call is built in this order: <b>1. Vegas and market signals</b>, <b>2. opportunity</b>, <b>3. efficiency over expected</b>, <b>4. context</b>, then box-score averages. Weekly decisions weight the recent role and this week's betting environment most heavily.</p>
+        </article>
+        <article class="card">
+          <h2 class="card-title">1 · Vegas &amp; market</h2>
+          <p>The game spread and total come from a consensus of DraftKings, FanDuel and BetMGM. If the books haven't posted yet, the app falls back to the nflverse schedule line. Implied team total = total ÷ 2 − team spread ÷ 2. The model compares that number with its own expected team points (offense scoring × opponent points allowed, regressed to league average). The ratio scales TD rates (square root) and yardage (power 0.2).</p>
+          <p style="margin-top:var(--space-3)"><b>Game script:</b> each point of spread moves pass volume about 0.8% (underdogs throw more, favorites run more), capped at ±8%. The total sets overall play volume: (total ÷ league average)<sup>0.3</sup>.</p>
+          <div class="mp" style="margin-top:var(--space-3)"><b>Player props:</b> the consensus line for receiving yards, rushing yards, receptions, pass attempts, pass yards and anytime TD is treated as a market expectation:
+          <ul>
+            <li>Yardage medians get +5% for right skew, then shift by the no-vig over probability.</li>
+            <li>Anytime TD converts to expected TDs as −ln(1 − p).</li>
+          </ul>
+          Each posted prop is blended 50/50 with the model's matching component. When market-implied points differ from the model by 15% or more (and at least 2 points), the player is flagged "Market higher" or "Market lower".</div>
+        </article>
+        <article class="card">
+          <h2 class="card-title">2 · Opportunity</h2>
+          <div class="mp">Volume is a recency-weighted per-game average: each week back counts 0.7× as much, so the recent role drives the number. From play-by-play, the app computes:
+          <ul>
+            <li>Target share, air-yards share and WOPR (1.5 × target share + 0.7 × air-yards share)</li>
+            <li>RB opportunity share: carries + targets as a share of team carries + targets</li>
+            <li>Red-zone opportunity share inside the 20 and inside the 10</li>
+            <li>Designed QB runs and scrambles, tracked separately</li>
+          </ul>
+          Snap share comes from snap counts. <b>Not public:</b> true route participation and RB red-zone snap share need player-tracking data that isn't released. TPRR and YPRR are estimated with routes ≈ team dropbacks × snap share, and are labeled "est."</div>
+        </article>
+        <article class="card">
+          <h2 class="card-title">3 · Efficiency &amp; over-expected</h2>
+          <div class="mp">The efficiency metrics come from four sources:
+          <ul>
+            <li>EPA per dropback, per carry and per target, plus CPOE, from play-by-play</li>
+            <li>Rush yards over expected per attempt, time to throw, separation and YAC over expected, from Next Gen Stats</li>
+            <li>Broken tackles per touch from Pro Football Reference, used as the missed-tackles-forced proxy</li>
+            <li>Expected fantasy points (xFP) and fantasy points over expected (FPOE) from <a href="https://github.com/ffverse/ffopportunity" target="_blank" rel="noopener">ffopportunity</a></li>
+          </ul>
+          TD rates are blended 50/50 toward expected TDs, so touchdown luck regresses. Players with at least 9 xFP per game who are running at least 2.5 points per game under expected are flagged as positive-regression candidates. Players at least 3 points per game (and 25%) over expected are flagged as fades.</div>
+        </article>
+        <article class="card">
+          <h2 class="card-title">4 · Context &amp; opponent</h2>
+          <div class="mp">Team context from play-by-play:
+          <ul>
+            <li>Neutral pass rate: win probability 20–80%, downs 1–3, outside the last two minutes of each half</li>
+            <li>Pass rate over expected</li>
+            <li>Neutral pace in seconds per play</li>
+          </ul>
+          Pro Football Reference adds pressure rate allowed by each offense and generated by each defense, and Next Gen Stats adds QB time to throw. Opponent defenses still apply allowed-rate multipliers (yards per carry, yards per attempt, completion %, TD rates, attempts faced, fantasy points allowed to the position), regressed toward 1.0 for sample size.</div>
+        </article>
+        <article class="card">
+          <h2 class="card-title">Distribution, boom &amp; bust</h2>
+          <p>The weekly outcome is a gamma distribution. Its spread comes from the player's own week-to-week volatility blended with a position prior, which yields P10, P25, median, P75 and P90.</p>
+          <div class="mp" style="margin-top:var(--space-3)">Boom and bust thresholds in PPR:
+          <ul>
+            <li>QB: boom 25+, bust under 12</li>
+            <li>RB and WR: boom 20+, bust under 8</li>
+            <li>TE: boom 15+, bust under 5</li>
+          </ul>
+          Non-QB thresholds drop 10% in Half-PPR and 20% in Standard.</div>
+        </article>
+        <article class="card">
+          <h2 class="card-title">Weather</h2>
+          <p>For outdoor stadiums, the game-time forecast (kickoff through the next three hours) is pulled live from <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> once it's within about 15 days. Domes and retractable roofs get no adjustment. Wind is the biggest factor: passing and receiving production is trimmed slightly from 10 mph, more steeply from 15 mph, and heavily past 20 mph (about −11% at 20 mph, −17% at 25). Rain trims passing about 4% (9% if heavy), heavy snow about 15%, and temperatures at or below 20°F about 3%. Bad weather also adds a few percent to rushing attempts and raises fumble risk. The point change shows next to each forecast.</p>
+        </article>
+        <article class="card">
+          <h2 class="card-title">Data</h2>
+          <p>Stats come from the open-source <a href="https://github.com/nflverse/nflverse-data/releases" target="_blank" rel="noopener">nflverse</a> releases: weekly player and team stats, play-by-play, snap counts, Next Gen Stats, Pro Football Reference advanced stats, schedule lines and injury reports. Expected points come from <a href="https://github.com/ffverse/ffopportunity" target="_blank" rel="noopener">ffopportunity</a>. Spreads, totals and player props come from US sportsbooks (DraftKings, FanDuel, BetMGM) and refresh with the weekly update. Any metric that isn't available shows as "Unavailable" or "No line". Generated <span id="genStamp"></span>. Projections cover regular-season games only; byes show as no game.</p>
+          <p style="margin-top:var(--space-3)">My Team reads leagues read-only from Sleeper's public API and ESPN's public-league API, straight from your browser. Nothing is stored on a server; your league link lives in the page URL so you can bookmark it.</p>
+        </article>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>window.ML_VER="942696c71c";</script>
+<script src="chart.umd.min.js?v=942696c71c"></script>
+<script src="team.js?v=942696c71c"></script>
+<script src="app.js?v=942696c71c"></script>
+</body>
+</html>
