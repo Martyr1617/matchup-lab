@@ -484,7 +484,7 @@
     $('#boardSub').textContent = `Expected ${SCORING[state.scoring].name} points vs. each player's Week ${week} opponent, ranked ${posTxt}. Includes everyone with a Week ${week} game; players on bye or ruled Out / IR are left off. Based on Weeks 1–${lc}. ITT = implied team total from the betting line; TPRR* is estimated from snap share.${state.liveInj ? ' Injury statuses live from ESPN.' : ''}`;
     const body = $('#boardBody');
     const mk = state.market && state.market.week === week;
-    $('#boardMarketNote').innerHTML = mk ? `Vegas lines and player props: consensus of DraftKings, FanDuel and BetMGM, as of ${esc(new Date(state.market.as_of).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}. Props are posted gradually during the week, so many players have no line yet.`
+    $('#boardMarketNote').innerHTML = mk ? `Vegas lines and player props: ${esc((state.market.books || []).length > 1 ? 'consensus of ' + state.market.books.join(', ') : (state.market.books || ['DraftKings'])[0])}, as of ${esc(new Date(state.market.as_of).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}. Props are posted gradually during the week, so many players have no line yet.`
       : `Sportsbook player props aren't loaded for Week ${week}; spreads and totals come from the nflverse schedule where posted.`;
     if (!rows.length) { body.innerHTML = `<tr class="empty-row"><td colspan="9">No projections for this week.</td></tr>`; $('#boardExtras').innerHTML = ''; return; }
     body.innerHTML = rows.map(({ pl, pr }, i) => {
@@ -1023,16 +1023,20 @@
   }
 
   // ---------- Boot ----------
+  const REMOTE = 'https://raw.githubusercontent.com/Martyr1617/matchup-lab/data/';
   async function boot() {
     initTheme();
     $('#boardBody').innerHTML = Array.from({ length: 8 }, () => `<tr><td colspan="9"><div class="skeleton" style="height:40px">&nbsp;</div></td></tr>`).join('');
     try {
-      const get = async () => {
-        const ctl = new AbortController(); const to = setTimeout(() => ctl.abort(), 15000);
-        try { const res = await fetch('data.json?v=' + (window.ML_VER || Date.now()), { cache: 'no-cache', signal: ctl.signal }); if (!res.ok) throw new Error('HTTP ' + res.status); return await res.json(); }
+      const get = async (url, ms = 15000) => {
+        const ctl = new AbortController(); const to = setTimeout(() => ctl.abort(), ms);
+        try { const res = await fetch(url, { cache: 'no-cache', signal: ctl.signal }); if (!res.ok) throw new Error('HTTP ' + res.status); return await res.json(); }
         finally { clearTimeout(to); }
       };
-      try { state.data = await get(); } catch (e1) { state.data = await get(); }
+      const local = () => get('data.json?v=' + (window.ML_VER || Date.now()));
+      // Fresh data is rebuilt every 3 hours by a free GitHub Actions workflow; the bundled copy is the fallback.
+      try { const d = await get(REMOTE + 'data.json?t=' + Math.floor(Date.now() / 6e5), 8000); if (!d || !Array.isArray(d.players) || d.players.length < 100) throw new Error('bad remote'); state.data = d; state.dataSrc = 'remote'; }
+      catch (e0) { try { state.data = await local(); } catch (e1) { state.data = await local(); } state.dataSrc = 'local'; }
     } catch (e) {
       $('#boardBody').innerHTML = `<tr class="empty-row"><td colspan="9">Couldn't load this week's data (${esc(e.name === 'AbortError' ? 'timed out' : e.message)}). <a href="" onclick="location.reload();return false">Try again</a></td></tr>`; return;
     }
@@ -1040,7 +1044,8 @@
     { const POS = /^(QB|RB|WR|TE)$/, TM = /^[A-Z]{2,3}$/;
       state.data.players = state.data.players.filter(p => POS.test(p.pos)).map(p => ({ ...p, team: TM.test(p.team) ? p.team : '' }));
       for (const wk in state.data.schedule) state.data.schedule[wk] = state.data.schedule[wk].filter(g => TM.test(g.home) && TM.test(g.away)); }
-    try { const mr = await fetch('market.json?v=' + (window.ML_VER || Date.now()), { cache: 'no-cache' }); if (mr.ok) state.market = await mr.json(); } catch (e) { state.market = null; }
+    const getM = async u => { const r = await fetch(u, { cache: 'no-cache' }); if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); };
+    try { state.market = await getM(REMOTE + 'market.json?t=' + Math.floor(Date.now() / 6e5)); } catch (e) { try { state.market = await getM('market.json?v=' + (window.ML_VER || Date.now())); } catch (e2) { state.market = null; } }
     const safe = (fn, name) => { try { fn(); } catch (e) { console.error(name, e); } };
     safe(initControls, 'controls'); safe(initSearch, 'search'); safe(renderBoard, 'board'); loadLiveInjuries();
     window.ML = { state, SCORING, weatherChip, weatherText, loadWeather, injuryOf, isOut, project, makeDist, gameFor, f1, f2, pct, esc, avatar, statusFlag, openPlayer, rkOrd, fmtKick, tn, setView, compareRows, compareTable };

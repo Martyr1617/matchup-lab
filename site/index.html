@@ -139,7 +139,7 @@
         </article>
         <article class="card">
           <h2 class="card-title">1 · Vegas &amp; market</h2>
-          <p>The game spread and total come from a consensus of DraftKings, FanDuel and BetMGM. If the books haven't posted yet, the app falls back to the nflverse schedule line. Implied team total = total ÷ 2 − team spread ÷ 2. The model compares that number with its own expected team points (offense scoring × opponent points allowed, regressed to league average). The ratio scales TD rates (square root) and yardage (power 0.2).</p>
+          <p>The game spread and total come from DraftKings, via ESPN. If the books haven't posted yet, the app falls back to the nflverse schedule line. Implied team total = total ÷ 2 − team spread ÷ 2. The model compares that number with its own expected team points (offense scoring × opponent points allowed, regressed to league average). The ratio scales TD rates (square root) and yardage (power 0.2).</p>
           <p style="margin-top:var(--space-3)"><b>Game script:</b> each point of spread moves pass volume about 0.8% (underdogs throw more, favorites run more), capped at ±8%. The total sets overall play volume: (total ÷ league average)<sup>0.3</sup>.</p>
           <div class="mp" style="margin-top:var(--space-3)"><b>Player props:</b> the consensus line for receiving yards, rushing yards, receptions, pass attempts, pass yards and anytime TD is treated as a market expectation:
           <ul>
@@ -197,7 +197,7 @@
         </article>
         <article class="card">
           <h2 class="card-title">Data</h2>
-          <p>Stats come from the open-source <a href="https://github.com/nflverse/nflverse-data/releases" target="_blank" rel="noopener">nflverse</a> releases: weekly player and team stats, play-by-play, snap counts, Next Gen Stats, Pro Football Reference advanced stats, schedule lines and injury reports. Expected points come from <a href="https://github.com/ffverse/ffopportunity" target="_blank" rel="noopener">ffopportunity</a>. Spreads, totals and player props come from US sportsbooks (DraftKings, FanDuel, BetMGM) and refresh with the weekly update. Any metric that isn't available shows as "Unavailable" or "No line". Generated <span id="genStamp"></span>. Projections cover regular-season games only; byes show as no game.</p>
+          <p>Stats come from the open-source <a href="https://github.com/nflverse/nflverse-data/releases" target="_blank" rel="noopener">nflverse</a> releases: weekly player and team stats, play-by-play, snap counts, Next Gen Stats, Pro Football Reference advanced stats, schedule lines and injury reports. Expected points come from <a href="https://github.com/ffverse/ffopportunity" target="_blank" rel="noopener">ffopportunity</a>. Spreads, totals and player-prop lines come from DraftKings through ESPN's public odds feed. A free GitHub Actions workflow rebuilds all data every 3 hours. ESPN's feed has no anytime-TD prices, so the anytime-TD market shows "No line" when that's the source. Any metric that isn't available shows as "Unavailable" or "No line". Generated <span id="genStamp"></span>. Projections cover regular-season games only; byes show as no game.</p>
           <p style="margin-top:var(--space-3)">My Team reads leagues read-only from Sleeper's public API and ESPN's public-league API, straight from your browser. Nothing is stored on a server; your league link lives in the page URL so you can bookmark it.</p>
         </article>
       </div>
