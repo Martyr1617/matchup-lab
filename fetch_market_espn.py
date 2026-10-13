@@ -85,7 +85,7 @@ def main(data_path='site/data.json', out_path='site/market.json'):
         for (name, mk), vals in lines.items():
             rec = out['props'].setdefault(norm(name), {'name': name, 'game': key})
             rec[mk] = {'line': median(vals), 'books': 1, 'lines': sorted(set(vals))}
-    out['as_of'] = (latest.replace('Z', ':00+00:00') if latest else out['updated'])
+    out['as_of'] = out['updated']  # ESPN's lastUpdated stamps are not reliable; use fetch time
     json.dump(out, open(out_path, 'w'), separators=(',', ':'))
     print(f"market: week {week}, {len(out['games'])} games, {len(out['props'])} players with props, as of {out['as_of']}", out['unavailable'] or '')
 
