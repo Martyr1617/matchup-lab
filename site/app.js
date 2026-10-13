@@ -489,7 +489,7 @@
     if (!rows.length) { body.innerHTML = `<tr class="empty-row"><td colspan="9">No projections for this week.</td></tr>`; $('#boardExtras').innerHTML = ''; return; }
     body.innerHTML = rows.map(({ pl, pr }, i) => {
       const vg = pr.vg, kp = keyProp(pl, pr);
-      const vegasLine = vg ? `<span class="vegas">ITT <b>${f1(vg.itt)}</b> · ${esc(pl.team)} ${fmtSpread(vg.teamSpread)} · O/U ${f1(vg.total)}</span>` : `<span class="vegas na">No line yet</span>`;
+      const vegasLine = vg ? `<span class="vegas" data-gl="ITT">ITT <b>${f1(vg.itt)}</b> · ${esc(pl.team)} ${fmtSpread(vg.teamSpread)} · O/U ${f1(vg.total)}</span>` : `<span class="vegas na">No line yet</span>`;
       const propCell = kp ? (kp.k === 'atd' ? `<div class="kp"><span class="kp-l">${kp.label}</span><b>${pct(kp.p)}</b></div>`
         : `<div class="kp"><span class="kp-l">${kp.label}</span><b>${f1(kp.line)}</b><span class="kp-m">model ${f1(kp.model)}</span></div>${pr.pm.atd ? `<div class="kp-sub">ATD ${pct(pr.pm.atd.p)}</div>` : ''}`) : '<span class="na">No props yet</span>';
       const opp = oppSummary(pl).map(([k, v]) => `<span class="chip">${k} <b>${v ?? '—'}</b></span>`).join('');
@@ -502,7 +502,7 @@
         <td class="matchup"><span class="vs">${pr.home ? 'vs' : '@'}</span> ${esc(pr.opp)} <span class="grade ${pr.grade.cls} sm">${pr.grade.label}</span><span class="when">${fmtKick(pr.game)}</span>${vegasLine}${weatherChip(pr.game, pr)}</td>
         <td>${propCell}</td>
         <td><div class="chips">${opp}</div></td>
-        <td class="num"><span class="projv">${f1(pr.pts)}</span>${pr.mktPts != null ? `<div class="mktv">mkt ${f1(pr.mktPts)}</div>` : ''}</td>
+        <td class="num"><span class="projv">${f1(pr.pts)}</span>${pr.mktPts != null ? `<div class="mktv" data-gl="mkt">mkt ${f1(pr.mktPts)}</div>` : ''}</td>
         <td class="num range">${f1(pr.floor)} – ${f1(pr.ceil)}</td>
         <td class="num bbcell"><span class="boom">${pct(pr.bb.boom)}</span> / <span class="bust">${pct(pr.bb.bust)}</span></td>
         <td><div class="flags">${flags || '<span class="na">—</span>'}</div></td>
