@@ -795,6 +795,8 @@
     sel.innerHTML = weeks.map(w => `<option value="${w}">Week ${w}${w === state.data.meta.next_week ? ' (next)' : ''}</option>`).join('');
     state.week = state.data.meta.next_week;
     sel.value = String(state.week);
+    const weekLabel = $('#boardWeekLabel');
+    if (weekLabel) weekLabel.textContent = `Week ${state.data.meta.next_week}`;
     sel.addEventListener('change', () => { state.week = Number(sel.value); rerender(); });
 
     const seg = (id, onChange) => {
