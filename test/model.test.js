@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { lgamma, makeDist, project, normName } = require('../site/model');
+const { lgamma, makeDist, project, normName, propMean } = require('../site/model');
 
 function factors() {
   return { rush_att: 1, ypc: 1, rush_td: 1, pass_att: 1, comp_pct: 1, ypa: 1, pass_td: 1, int: 1 };
@@ -105,4 +105,9 @@ test('props are keyed by ESPN id so same-name players do not collide', () => {
   const unnamed = project({ ...qb, ids: {} }, 6, 'ppr', legacy);
   assert.equal(unnamed.pm.pass_yds.line, 260);
   assert.equal(normName('Josh Allen Jr.'), 'joshallen');
+});
+
+test('propMean stays available to the player page', () => {
+  assert.equal(propMean({ line: 100, p_over: 0.5 }, true), 105);
+  assert.equal(propMean({ line: 20 }, false), 20);
 });

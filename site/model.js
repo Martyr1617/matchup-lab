@@ -238,5 +238,5 @@
       dist, grade, floor: dist.quantile(0.1), ceil: dist.quantile(0.9), p15: dist.pOver(15), p20: dist.pOver(20), reg: regFlag(pl) };
   }
 
-  return { SCORING, lgamma, gammaP, makeDist, project, gameFor, weatherAdj, vegasFor, propsFor, boomBust, matchupGrade, normName, blend };
+  return { SCORING, lgamma, gammaP, makeDist, project, gameFor, weatherAdj, vegasFor, propsFor, propMean, boomBust, matchupGrade, normName, blend };
 });

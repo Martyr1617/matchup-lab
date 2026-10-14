@@ -12,6 +12,7 @@
   function makeDist(mean, cv) { return window.MLModel.makeDist(mean, cv); }
   function gameFor(team, week) { return window.MLModel.gameFor(team, week, state.data); }
   function project(pl, week, scoringKey) { return window.MLModel.project(pl, week, scoringKey, state); }
+  function propMean(o, yards) { return window.MLModel.propMean(o, yards); }
 
   // ---------- Theme ----------
   function initTheme() {
