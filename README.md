@@ -1,6 +1,6 @@
 # Matchup Lab data
 
-Builds the data behind [Matchup Lab](https://matchup-lab.pplx.app), a weekly fantasy football projection app.
+Builds the data behind Matchup Lab, a weekly fantasy football projection app. Every push to `main` publishes `site/` to GitHub Pages at <https://martyr1617.github.io/matchup-lab/>. [matchup-lab.pplx.app](https://matchup-lab.pplx.app) is a separate host and does not update from this repository.
 
 A scheduled GitHub Actions workflow runs every hour. Each run:
 
@@ -8,7 +8,9 @@ A scheduled GitHub Actions workflow runs every hour. Each run:
 2. Pulls DraftKings spreads, totals and player-prop lines from ESPN's public feed.
 3. Pushes `data.json` and `market.json` to the `data` branch, which the app reads.
 
-To refresh right away, go to Actions → "Refresh Matchup Lab data" → Run workflow.
+The Pages site keeps loading those files from `https://raw.githubusercontent.com/Martyr1617/matchup-lab/data/`. The copies committed under `site/` are the fallback when that branch cannot be reached. The hourly refresh does not deploy the page.
+
+To refresh right away, go to Actions → "Refresh Matchup Lab data" → Run workflow. To republish the page, go to Actions → "Deploy Matchup Lab site" → Run workflow, or push to `main`.
 
 ## Tests
 
