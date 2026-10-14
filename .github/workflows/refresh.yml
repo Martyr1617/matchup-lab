@@ -52,14 +52,7 @@ jobs:
             echo "::warning::ESPN odds fetch failed (exit ${code})"
             rm -f site/market.json
             if [ -s /tmp/prev_market.json ]; then
-              python - <<'PY'
-              import json
-              from validate_publish import mark_market_stale
-              previous = json.load(open('/tmp/prev_market.json'))
-              kept = mark_market_stale(previous, 'ESPN fetch failed; kept the previous market.json')
-              json.dump(kept, open('site/market.json', 'w'), separators=(',', ':'))
-              print('kept previous market.json, marked stale')
-              PY
+              python -c "import json; from validate_publish import mark_market_stale; previous=json.load(open('/tmp/prev_market.json')); kept=mark_market_stale(previous, 'ESPN fetch failed; kept the previous market.json'); json.dump(kept, open('site/market.json','w'), separators=(',',':')); print('kept previous market.json, marked stale')"
               echo "status=stale" >> "$GITHUB_OUTPUT"
             else
               echo "status=missing" >> "$GITHUB_OUTPUT"
