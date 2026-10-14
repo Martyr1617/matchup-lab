@@ -25,21 +25,112 @@ def _r(x, n=3):
         return None
 
 
-def _read(path, **kw):
+def _read(path, data_dir=D, **kw):
     try:
-        if os.path.exists(D + path): return pd.read_csv(D + path, low_memory=False, **kw)
+        full = os.path.join(data_dir, path)
+        if os.path.exists(full): return pd.read_csv(full, low_memory=False, **kw)
     except Exception as e:
         print('could not read', path, e)
     return None
 
 
-def build(cur_week, players, db_ids_path=D + 'db_playerids.csv'):
+def estimate_dropbacks(df):
+    """Dropbacks implied by times pressured divided by the pressure rate.
+
+    A zero pressure rate is a real game with zero pressures, not a missing
+    game. Dropping those rows (the old `pct > 0` mask) made the rate too high.
+    When the pressure rate is zero, recover that game's dropbacks from the
+    bad-throw rate or the drop rate, plus sacks. A row with no recoverable
+    count stays out: inventing another game's volume would bias the rate down.
+    """
+    tp = pd.to_numeric(df['times_pressured'], errors='coerce')
+    pct = pd.to_numeric(df['times_pressured_pct'], errors='coerce')
+    est = pd.Series(np.where(pct > 0, tp / pct, np.nan), index=df.index)
+    sacks = pd.to_numeric(df['times_sacked'], errors='coerce').fillna(0) if 'times_sacked' in df.columns else 0
+    for count_col, rate_col in (('passing_bad_throws', 'passing_bad_throw_pct'),
+                                ('passing_drops', 'passing_drop_pct')):
+        if count_col not in df.columns or rate_col not in df.columns:
+            continue
+        count = pd.to_numeric(df[count_col], errors='coerce')
+        rate = pd.to_numeric(df[rate_col], errors='coerce')
+        alt = count / rate + sacks
+        zero = pct.eq(0) & est.isna() & rate.gt(0)
+        est = est.mask(zero, alt)
+    return est
+
+
+def _wavg(frame, col, weight):
+    if col not in frame.columns or weight not in frame.columns:
+        return None
+    w = pd.to_numeric(frame[weight], errors='coerce').fillna(0)
+    x = pd.to_numeric(frame[col], errors='coerce')
+    ok = x.notna() & (w > 0)
+    if not ok.any():
+        return None
+    return float((x[ok] * w[ok]).sum() / w[ok].sum())
+
+
+def aggregate_ngs(weekly, kind):
+    """Season-to-date stand-in when the week==0 row is absent. Rates are attempt-weighted."""
+    rows = []
+    for pid, g in weekly.groupby('player_gsis_id'):
+        row = {'player_gsis_id': pid, 'week': 0}
+        if kind == 'passing':
+            row['avg_time_to_throw'] = _wavg(g, 'avg_time_to_throw', 'attempts')
+            row['completion_percentage_above_expectation'] = _wavg(g, 'completion_percentage_above_expectation', 'attempts')
+            row['aggressiveness'] = _wavg(g, 'aggressiveness', 'attempts')
+        elif kind == 'rushing':
+            if 'rush_yards_over_expected' in g.columns:
+                row['rush_yards_over_expected'] = float(pd.to_numeric(g['rush_yards_over_expected'], errors='coerce').fillna(0).sum())
+            row['rush_yards_over_expected_per_att'] = _wavg(g, 'rush_yards_over_expected_per_att', 'rush_attempts')
+            row['percent_attempts_gte_eight_defenders'] = _wavg(g, 'percent_attempts_gte_eight_defenders', 'rush_attempts')
+        else:
+            weight = 'targets' if 'targets' in g.columns else 'receptions'
+            row['avg_separation'] = _wavg(g, 'avg_separation', weight)
+            row['avg_yac_above_expectation'] = _wavg(g, 'avg_yac_above_expectation', weight)
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def ngs_season_to_date(df, kind, season, cur_week):
+    """Use the week==0 season-to-date row. If it is missing, say so and aggregate weeks 1..cur_week."""
+    scoped = df[(df.season == season) & (df.season_type == 'REG')]
+    std = scoped[scoped.week == 0]
+    if len(std):
+        return std
+    weekly = scoped[(scoped.week >= 1) & (scoped.week <= cur_week)]
+    print(f'WARNING: NGS {kind} has no week==0 season-to-date rows for {season} REG; '
+          f'aggregating {len(weekly)} weekly rows through week {cur_week}')
+    if not len(weekly):
+        return weekly
+    return aggregate_ngs(weekly, kind)
+
+
+def opportunity_rows(ep, season, cur_week):
+    """ffopportunity rows for this regular season only."""
+    e = ep
+    if 'season' in e.columns:
+        e = e[e.season == season]
+    if 'season_type' in e.columns:
+        e = e[e.season_type == 'REG']
+    elif 'game_type' in e.columns:
+        e = e[e.game_type == 'REG']
+    else:
+        # This release has no season-type column. Regular season is weeks 1-18.
+        e = e[e.week.between(1, 18)]
+    return e[e.week <= cur_week]
+
+
+def build(cur_week, players, db_ids_path=None, data_dir=D, season=2026):
+    if db_ids_path is None:
+        db_ids_path = os.path.join(data_dir, 'db_playerids.csv')
+    read = lambda name, **kw: _read(name, data_dir, **kw)
     adv, team_ctx, avail = {}, {}, {}
-    pbp = _read('pbp_2026.csv.gz')
-    snaps = _read('snaps_2026.csv')
-    ep = _read('ep_2026.csv')
-    pfr_pass = _read('pfr_pass_2026.csv'); pfr_rush = _read('pfr_rush_2026.csv'); pfr_rec = _read('pfr_rec_2026.csv')
-    ngs = {k: _read(f'ngs_{k}.csv.gz') for k in ('passing', 'rushing', 'receiving')}
+    pbp = read('pbp_2026.csv.gz')
+    snaps = read('snaps_2026.csv')
+    ep = read('ep_2026.csv')
+    pfr_pass = read('pfr_pass_2026.csv'); pfr_rush = read('pfr_rush_2026.csv'); pfr_rec = read('pfr_rec_2026.csv')
+    ngs = {k: read(f'ngs_{k}.csv.gz') for k in ('passing', 'rushing', 'receiving')}
     try:
         ids = pd.read_csv(db_ids_path, dtype=str)
         pfr2gsis = dict(zip(ids.pfr_id, ids.gsis_id))
@@ -53,15 +144,21 @@ def build(cur_week, players, db_ids_path=D + 'db_playerids.csv'):
     if pbp is not None:
         avail['pbp'] = True
         pbp = pbp[(pbp.season_type == 'REG') & (pbp.week <= cur_week)]
-        plays = pbp[pbp.play_type.isin(['pass', 'run']) & (pbp.two_point_attempt != 1)].copy()
+        plays = pbp[pbp.play_type.isin(['pass', 'run']) & (pbp.two_point_attempt.fillna(0) != 1)].copy()
+        if 'aborted_play' in plays.columns:
+            # Aborted snaps are coded as runs. They are not designed carries.
+            plays = plays[plays.aborted_play.fillna(0) != 1]
         plays['is_db'] = plays.qb_dropback.fillna(0) == 1
         plays['is_rush'] = plays.play_type == 'run'
         plays['kneel'] = plays.qb_kneel.fillna(0) == 1
-        rz20 = plays.yardline_100 <= 20; rz10 = plays.yardline_100 <= 10
-        # team totals
+        plays['is_scramble'] = plays.qb_scramble.fillna(0) == 1
+        # team totals. Targets are thrown passes with an intended receiver.
+        # Carry denominators are designed rushes: kneels and scrambles are separate.
         tm_g = plays.groupby('posteam').game_id.nunique()
-        tgt_plays = plays[plays.receiver_player_id.notna() & (plays.play_type == 'pass')]
-        car_plays = plays[plays.is_rush & plays.rusher_player_id.notna() & ~plays.kneel]
+        thrown = plays.pass_attempt.fillna(0).eq(1) if 'pass_attempt' in plays.columns else plays.play_type.eq('pass')
+        tgt_plays = plays[thrown & plays.receiver_player_id.notna()]
+        rush_plays = plays[plays.is_rush & plays.rusher_player_id.notna() & ~plays.kneel]
+        car_plays = rush_plays[~rush_plays.is_scramble]
         team_tgt = tgt_plays.groupby('posteam').size(); team_car = car_plays.groupby('posteam').size()
         team_rz20 = tgt_plays[tgt_plays.yardline_100 <= 20].groupby('posteam').size().add(car_plays[car_plays.yardline_100 <= 20].groupby('posteam').size(), fill_value=0)
         team_rz10 = tgt_plays[tgt_plays.yardline_100 <= 10].groupby('posteam').size().add(car_plays[car_plays.yardline_100 <= 10].groupby('posteam').size(), fill_value=0)
@@ -76,14 +173,18 @@ def build(cur_week, players, db_ids_path=D + 'db_playerids.csv'):
             a = A(pid); a.setdefault('_t', {}).setdefault(tm, {})
             a['_t'][tm].update({'tgt': len(d), 'ay': float(d.air_yards.fillna(0).sum()), 'rz20_t': int((d.yardline_100 <= 20).sum()),
                                 'rz10_t': int((d.yardline_100 <= 10).sum()), 'epa_t': float(d.epa.sum()), 'n_t': len(d)})
-        for (pid, tm), d in by_player(car_plays, 'rusher_player_id'):
+        for (pid, tm), d in by_player(rush_plays, 'rusher_player_id'):
             if pid not in pid_set: continue
             a = A(pid); a.setdefault('_t', {}).setdefault(tm, {})
-            sc = d.qb_scramble.fillna(0) == 1
+            sc = d.is_scramble
             a['_t'][tm].update({'car': int((~sc).sum()), 'scr': int(sc.sum()), 'rz20_c': int(((d.yardline_100 <= 20) & ~sc).sum()),
                                 'rz10_c': int(((d.yardline_100 <= 10) & ~sc).sum()), 'epa_r': float(d[~sc].epa.sum()), 'n_r': int((~sc).sum())})
-        # QB dropback EPA + CPOE
-        dbp = plays[plays.is_db & plays.passer_player_id.notna() | (plays.is_db & (plays.qb_scramble == 1))].copy()
+        # QB dropback EPA + CPOE.
+        # A scramble is a dropback. nflverse often leaves passer_player_id empty on
+        # those rows and records the quarterback only as the rusher, so the scramble
+        # still counts. `&` binds tighter than `|`; the parentheses keep a scramble
+        # from also having to carry a passer id.
+        dbp = plays.loc[plays.is_db & (plays.passer_player_id.notna() | plays.is_scramble)].copy()
         dbp['qb'] = dbp.passer_player_id.fillna(dbp.rusher_player_id)
         for pid, d in dbp.groupby('qb'):
             if pid not in pid_set: continue
@@ -170,8 +271,10 @@ def build(cur_week, players, db_ids_path=D + 'db_playerids.csv'):
     # ---------------- Next Gen Stats ----------------
     for k, df in ngs.items():
         if df is None: avail['ngs_' + k] = False; continue
-        df = df[(df.season == 2026) & (df.season_type == 'REG') & (df.week == 0)]  # week 0 = season-to-date
+        df = ngs_season_to_date(df, k, season, cur_week)  # week 0 = season-to-date; weeks are aggregated only if it is missing
         avail['ngs_' + k] = len(df) > 0
+        if not len(df):
+            continue
         for _, row in df.iterrows():
             pid = row.player_gsis_id
             if pid not in pid_set: continue
@@ -188,28 +291,26 @@ def build(cur_week, players, db_ids_path=D + 'db_playerids.csv'):
     # ---------------- PFR: pressure, broken tackles ----------------
     if pfr_pass is not None:
         avail['pressure'] = True
-        pp = pfr_pass[(pfr_pass.game_type == 'REG') & (pfr_pass.week <= cur_week)]
+        pp = pfr_pass[(pfr_pass.game_type == 'REG') & (pfr_pass.week <= cur_week)].copy()
+        pp['_db'] = estimate_dropbacks(pp)
+        def _prate(d):
+            tot_db = d['_db'].sum(min_count=1)
+            if tot_db is None or not np.isfinite(tot_db) or tot_db <= 0:
+                return None
+            return _r(pd.to_numeric(d.times_pressured, errors='coerce').sum() / tot_db, 3)
         for tm, d in pp.groupby('team'):
-            # dropbacks ~ times_pressured / times_pressured_pct (per game) -> sum
-            pct = d.times_pressured_pct.astype(float)
-            est_db = np.where(pct > 0, d.times_pressured / pct, np.nan)
-            tot_db = np.nansum(est_db)
-            team_ctx.setdefault(tm, {})['pressure_allowed'] = _r(d.times_pressured.sum() / tot_db, 3) if tot_db else None
+            team_ctx.setdefault(tm, {})['pressure_allowed'] = _prate(d)
         for tm, d in pp.groupby('opponent'):
-            pct = d.times_pressured_pct.astype(float)
-            est_db = np.where(pct > 0, d.times_pressured / pct, np.nan)
-            tot_db = np.nansum(est_db)
-            team_ctx.setdefault(tm, {})['pressure_generated'] = _r(d.times_pressured.sum() / tot_db, 3) if tot_db else None
+            team_ctx.setdefault(tm, {})['pressure_generated'] = _prate(d)
         for key, rev in (('pressure_allowed', False), ('pressure_generated', True)):
             vals = [(tm, c[key]) for tm, c in team_ctx.items() if c.get(key) is not None]
             for i, (tm, _) in enumerate(sorted(vals, key=lambda x: x[1], reverse=rev)): team_ctx[tm][key + '_rk'] = i + 1
-        qp = pp.groupby('pfr_player_id')[['times_pressured']].sum()
-        for pfr, row in qp.iterrows():
+        for pfr, d in pp.groupby('pfr_player_id'):
             gs = pfr2gsis.get(pfr)
             if gs in pid_set:
-                d = pp[pp.pfr_player_id == pfr]; pct = d.times_pressured_pct.astype(float)
-                est = np.nansum(np.where(pct > 0, d.times_pressured / pct, np.nan))
-                if est: A(gs)['pressured_rate'] = _r(row.times_pressured / est, 3)
+                rate = _prate(d)
+                if rate is not None:
+                    A(gs)['pressured_rate'] = rate
     else:
         avail['pressure'] = False
     if pfr_rush is not None or pfr_rec is not None:
@@ -230,7 +331,7 @@ def build(cur_week, players, db_ids_path=D + 'db_playerids.csv'):
     # ---------------- Expected fantasy points (ffopportunity) ----------------
     if ep is not None:
         avail['xfp'] = True
-        e = ep[ep.week <= cur_week]
+        e = opportunity_rows(ep, season, cur_week)
         for pid, d in e.groupby('player_id'):
             if pid not in pid_set: continue
             g = d.game_id.nunique()

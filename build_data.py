@@ -345,7 +345,7 @@ def main():
         return o
 
     import build_advanced
-    adv, team_ctx, avail = build_advanced.build(CUR_WEEK, players)
+    adv, team_ctx, avail = build_advanced.build(CUR_WEEK, players, season=SEASON)
     for pl in players:
         pl['adv'] = adv.get(pl['id'])
     print('adv players', sum(1 for pl in players if pl.get('adv')), 'avail', avail)
