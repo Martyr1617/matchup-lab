@@ -2,7 +2,7 @@
 Writes site/market.json in the same shape the app expects. No API key needed.
 Spreads/totals: site.api.espn.com scoreboard. Props: sports.core.api.espn.com propBets (lines only, no prices).
 """
-import json, re, sys, time, unicodedata, urllib.request
+import json, re, sys, time, urllib.request
 from datetime import datetime, timezone
 
 ABBR = {'WSH': 'WAS', 'LAR': 'LA', 'JAC': 'JAX'}
@@ -24,13 +24,6 @@ def get(url, tries=3):
         except Exception as e:
             if i == tries - 1: raise
             time.sleep(2 + i * 3)
-
-
-def norm(s):
-    s = unicodedata.normalize('NFD', str(s).lower())
-    s = ''.join(c for c in s if unicodedata.category(c) != 'Mn')
-    s = re.sub(r'\b(jr|sr|ii|iii|iv|v)\b\.?', '', s)
-    return re.sub(r'[^a-z]', '', s)
 
 
 def median(a):
@@ -133,12 +126,14 @@ def main(data_path='site/data.json', out_path='site/market.json'):
             m = re.search(r'/athletes/(\d+)', (it.get('athlete') or {}).get('$ref', ''))
             v = ((it.get('current') or {}).get('target') or {}).get('value')
             if not m or v is None: continue
-            name = espn2name.get(m.group(1))
+            espn_id = m.group(1)
+            name = espn2name.get(espn_id)
+            # No crosswalk hit: skip rather than key a bare name that can collide.
             if not name: continue
-            lines.setdefault((name, mk), []).append(float(v))
+            lines.setdefault((espn_id, mk), []).append(float(v))
             latest = max(latest, it.get('lastUpdated') or '')
-        for (name, mk), vals in lines.items():
-            rec = out['props'].setdefault(norm(name), {'name': name, 'game': key})
+        for (espn_id, mk), vals in lines.items():
+            rec = out['props'].setdefault(espn_id, {'name': espn2name.get(espn_id), 'espn': espn_id, 'game': key})
             rec[mk] = {'line': median(vals), 'books': 1, 'lines': sorted(set(vals))}
     out['as_of'] = out['updated']  # ESPN's lastUpdated stamps are not reliable; use fetch time
     if compared >= 4 and mismatches / compared > 0.5:

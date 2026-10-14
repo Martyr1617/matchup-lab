@@ -86,13 +86,23 @@ test('home favorite from a positive nflverse spread is the home team', () => {
   assert.ok(home.vg.itt > away.vg.itt);
 });
 
-test('props still match a normalized name until ids are wired', () => {
+test('props are keyed by ESPN id so same-name players do not collide', () => {
   const e = env();
   e.market = {
     week: 6,
-    props: { joshallen: { name: 'Josh Allen', game: 'NYJ@BUF', pass_yds: { line: 275 } } },
+    props: {
+      '3918298': { name: 'Josh Allen', espn: '3918298', game: 'NYJ@BUF', pass_yds: { line: 275 } },
+      '999': { name: 'Josh Allen', espn: '999', game: 'NYJ@BUF', pass_yds: { line: 40 } },
+    },
   };
   const pr = project(qb, 6, 'ppr', e);
   assert.equal(pr.pm.pass_yds.line, 275);
+  const other = project({ ...qb, ids: { espn: '999' } }, 6, 'ppr', e);
+  assert.equal(other.pm.pass_yds.line, 40);
+  // An older file keyed only by name still works for a player with no ESPN id.
+  const legacy = env();
+  legacy.market = { week: 6, props: { joshallen: { name: 'Josh Allen', game: 'NYJ@BUF', pass_yds: { line: 260 } } } };
+  const unnamed = project({ ...qb, ids: {} }, 6, 'ppr', legacy);
+  assert.equal(unnamed.pm.pass_yds.line, 260);
   assert.equal(normName('Josh Allen Jr.'), 'joshallen');
 });

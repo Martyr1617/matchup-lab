@@ -319,12 +319,18 @@ def main():
         e = ids_by_gsis.get(pl['id'], {})
         pl['ids'] = {'sl': _s(e.get('sl')), 'espn': _s(e.get('espn')), 'yahoo': _s(e.get('yahoo'))}
         if e.get('inj'): pl['sl_inj'] = {'status': e.get('inj'), 'body': e.get('injb')}
-    _byname = {}
-    for pl in players: _byname.setdefault(pl['name'].lower(), []).append(pl)
+    # Fill a missing Sleeper id from the ESPN id already on the crosswalk.
+    # Matching on the display name collides when two players share it.
+    by_espn = {}
+    for pl in players:
+        eid = pl['ids'].get('espn')
+        if eid:
+            by_espn.setdefault(eid, []).append(pl)
     for sid, sp_ in sl.items():
-        nm = (sp_.get('full_name') or '').lower()
-        if nm in _byname and len(_byname[nm]) == 1 and not _byname[nm][0]['ids'].get('sl') and sp_.get('team') == _byname[nm][0]['team']:
-            _byname[nm][0]['ids']['sl'] = sid
+        eid = _s(sp_.get('espn_id'))
+        cands = by_espn.get(eid) if eid else None
+        if cands and len(cands) == 1 and not cands[0]['ids'].get('sl'):
+            cands[0]['ids']['sl'] = _s(sid)
     # Sleeper players without stats in our data (K, DEF, rookies, injured) so rosters can still be displayed
     have = {pl['ids']['sl'] for pl in players if pl['ids']['sl']}
     sl_extra = {}

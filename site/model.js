@@ -91,8 +91,15 @@
 
   function propsFor(pl, game, week, market) {
     if (!market || market.week !== week || !market.props) return null;
-    const p = market.props[normName(pl.name)];
-    if (!p || p.game !== `${game.away}@${game.home}`) return null;
+    const gameKey = `${game.away}@${game.home}`;
+    const espn = pl.ids && pl.ids.espn ? String(pl.ids.espn) : null;
+    // Props are keyed by ESPN id. A name key is only a fallback for an older
+    // file, and only when that record is not tagged as a different player.
+    const byId = espn ? market.props[espn] : null;
+    const byName = market.props[normName(pl.name)];
+    const p = byId || (!espn ? byName : (byName && !byName.espn ? byName : null));
+    if (!p || p.game !== gameKey) return null;
+    if (p.espn && espn && String(p.espn) !== espn) return null;
     return p;
   }
 
