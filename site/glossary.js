@@ -51,8 +51,8 @@
     ['Pressured rate', /^pressured rate/i, 'How often this QB was pressured on his dropbacks.'],
     // Distribution
     ['Proj · Projection', /^(proj|projection)$/i, 'Expected fantasy points this week in your scoring format. It\'s the average of the player\'s projected outcome range, after the Vegas, prop, opportunity, matchup and weather adjustments.'],
-    ['P10–P90 · Outcome range', /^p10\s*[–-]\s*p90$|^p10 \/ p50 \/ p90$/i, 'The range of likely outcomes. P10 is a bad week (only 10% of outcomes fall below it); P90 is a big week (only 10% go above it); P50 is the median. A wider range means more volatility.'],
-    ['Percentile', /^p(10|25|50|75|90)$/i, 'Percentile of the projected outcome range. For example, P25 means a 25% chance of scoring less than this number.'],
+    ['Floor–Ceiling', /^floor(\s*[–-]\s*ceiling|\s*\/\s*median\s*\/\s*ceiling)?$|^ceiling$/i, 'The floor is a bad-week score the player finishes below about 10% of the time. The ceiling is a great-week score they top about 10% of the time, so roughly 80% of weeks land between them. Where a third number is shown, it is the median. A wider gap means a more volatile week.'],
+    ['Percentile', /^p(25|50|75)$/i, 'A point on the projected outcome range. P25 means a 25% chance of scoring less than this number, P50 is the median, and P75 means a 25% chance of scoring more.'],
     ['Boom / Bust', /^boom/i, 'Boom = chance of a big week; bust = chance of a dud. PPR thresholds: QB boom 25+, bust under 12; RB and WR boom 20+, bust under 8; TE boom 15+, bust under 5. Thresholds for non-QBs drop 10% in Half-PPR and 20% in Standard.'],
     ['Bust', /^bust$/i, 'Chance of a dud week, below the position\'s bust threshold (PPR: QB under 12, RB and WR under 8, TE under 5).'],
     ['Flags', /^flags$/i, 'Alerts: "Regression: up" = strong usage but soft results (likely to improve); "Fade" = production running well ahead of usage (likely to cool off); "Market higher/lower" = sportsbook props imply notably more or fewer points than the model.'],
