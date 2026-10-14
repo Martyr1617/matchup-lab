@@ -484,8 +484,11 @@
     $('#boardSub').textContent = `Expected ${SCORING[state.scoring].name} points vs. each player's Week ${week} opponent, ranked ${posTxt}. Includes everyone with a Week ${week} game; players on bye or ruled Out / IR are left off. Based on Weeks 1–${lc}. ITT = implied team total from the betting line; TPRR* is estimated from snap share.${state.liveInj ? ' Injury statuses live from ESPN.' : ''}`;
     const body = $('#boardBody');
     const mk = state.market && state.market.week === week;
-    $('#boardMarketNote').innerHTML = mk ? `Vegas lines and player props: ${esc((state.market.books || []).length > 1 ? 'consensus of ' + state.market.books.join(', ') : (state.market.books || ['DraftKings'])[0])}, as of ${esc(new Date(state.market.as_of).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}. Props are posted gradually during the week, so many players have no line yet.`
-      : `Sportsbook player props aren't loaded for Week ${week}; spreads and totals come from the nflverse schedule where posted.`;
+    const staleNote = state.market && state.market.stale
+      ? ` <b>These lines are stale</b> (${esc(state.market.stale_reason || 'the last odds fetch failed')}).`
+      : '';
+    $('#boardMarketNote').innerHTML = mk ? `Vegas lines and player props: ${esc((state.market.books || []).length > 1 ? 'consensus of ' + state.market.books.join(', ') : (state.market.books || ['DraftKings'])[0])}, as of ${esc(new Date(state.market.as_of).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}.${staleNote} Props are posted gradually during the week, so many players have no line yet.`
+      : `Sportsbook player props aren't loaded for Week ${week}; spreads and totals come from the nflverse schedule where posted.${staleNote}`;
     if (!rows.length) { body.innerHTML = `<tr class="empty-row"><td colspan="9">No projections for this week.</td></tr>`; $('#boardExtras').innerHTML = ''; return; }
     body.innerHTML = rows.map(({ pl, pr }, i) => {
       const vg = pr.vg, kp = keyProp(pl, pr);

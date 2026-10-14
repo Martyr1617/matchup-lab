@@ -5,6 +5,7 @@ on:
   workflow_dispatch: {}
 permissions:
   contents: write
+  issues: write
 concurrency:
   group: refresh
   cancel-in-progress: false
@@ -22,16 +23,44 @@ jobs:
       - run: pip install --quiet pandas==3.0.6 numpy==2.5.4
       - name: Download nflverse + build data.json
         run: bash refresh.sh
-      - name: Vegas lines + player props (ESPN / DraftKings)
-        run: python fetch_market_espn.py site/data.json site/market.json || echo "::warning::odds fetch failed; app falls back to schedule lines"
       - name: Sanity check
+        run: python validate_publish.py site/data.json
+      - name: Remember the previous market.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          python - <<'PY'
-          import json
-          d = json.load(open('site/data.json'))
-          assert len(d['players']) > 200, 'too few players'
-          print('players', len(d['players']), 'last week', d['meta']['last_completed_week'], 'next', d['meta']['next_week'])
-          PY
+          # The publish step replaces the data branch, so a failed odds fetch has to
+          # copy the last good market.json forward instead of omitting it.
+          if git fetch --depth=1 "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" data; then
+            git show FETCH_HEAD:market.json > /tmp/prev_market.json 2>/dev/null || rm -f /tmp/prev_market.json
+          fi
+      - name: Vegas lines + player props (ESPN / DraftKings)
+        id: market
+        run: |
+          set +e
+          python fetch_market_espn.py site/data.json site/market.json
+          code=$?
+          set -e
+          if [ "$code" -eq 0 ] && [ -s site/market.json ]; then
+            echo "status=fresh" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::ESPN odds fetch failed (exit ${code})"
+            rm -f site/market.json
+            if [ -s /tmp/prev_market.json ]; then
+              python - <<'PY'
+              import json
+              from validate_publish import mark_market_stale
+              previous = json.load(open('/tmp/prev_market.json'))
+              kept = mark_market_stale(previous, 'ESPN fetch failed; kept the previous market.json')
+              json.dump(kept, open('site/market.json', 'w'), separators=(',', ':'))
+              print('kept previous market.json, marked stale')
+              PY
+              echo "status=stale" >> "$GITHUB_OUTPUT"
+            else
+              echo "status=missing" >> "$GITHUB_OUTPUT"
+              echo "::warning::No previous market.json to keep"
+            fi
+          fi
       - name: Publish to the data branch
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -46,6 +75,16 @@ jobs:
           git add .
           git commit -qm "Data $(date -u +%Y-%m-%dT%H:%MZ)"
           git push -qf "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" data
+      - name: Report a stale or missing market file
+        if: success() && steps.market.outputs.status != 'fresh'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/refresh_issue.sh "Market lines were not refreshed (${{ steps.market.outputs.status }})"
+      - name: Report a failed refresh
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/refresh_issue.sh "Data refresh failed"
       - name: Weekly keepalive (keeps the schedule from being auto-disabled)
         if: github.event_name == 'schedule'
         env:
