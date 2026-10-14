@@ -15,7 +15,7 @@
 <meta name="mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-title" content="Matchup Lab" />
 <meta name="theme-color" content="#14171c" />
-<link rel="stylesheet" href="styles.css?v=9ee16991f4" />
+<link rel="stylesheet" href="styles.css?v=85eedca1b6" />
 </head>
 <body>
 <div class="app">
@@ -183,7 +183,7 @@
         </article>
         <article class="card">
           <h2 class="card-title">Distribution, boom &amp; bust</h2>
-          <p>The weekly outcome is a gamma distribution. Its spread comes from the player's own week-to-week volatility blended with a position prior, which yields P10, P25, median, P75 and P90.</p>
+          <p>The weekly outcome is a normal distribution centered on the projection. Its spread starts from the player's week-to-week volatility blended with a position prior, then widens by 1.25× so P10–P90 covers about 80% of past seasons. Scores can be negative, which a gamma could not represent.</p>
           <div class="mp" style="margin-top:var(--space-3)">Boom and bust thresholds in PPR:
           <ul>
             <li>QB: boom 25+, bust under 12</li>
@@ -211,11 +211,11 @@
   </main>
 </div>
 
-<script>window.ML_VER="9ee16991f4";</script>
-<script src="chart.umd.min.js?v=9ee16991f4"></script>
-<script src="team.js?v=9ee16991f4"></script>
-<script src="glossary.js?v=9ee16991f4"></script>
-<script src="model.js?v=9ee16991f4"></script>
-<script src="app.js?v=9ee16991f4"></script>
+<script>window.ML_VER="85eedca1b6";</script>
+<script src="chart.umd.min.js?v=85eedca1b6"></script>
+<script src="team.js?v=85eedca1b6"></script>
+<script src="glossary.js?v=85eedca1b6"></script>
+<script src="model.js?v=85eedca1b6"></script>
+<script src="app.js?v=85eedca1b6"></script>
 </body>
 </html>

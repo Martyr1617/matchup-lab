@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { lgamma, makeDist, project, normName, propMean } = require('../site/model');
+const { lgamma, makeDist, project, normName, propMean, PREDICTIVE_SPREAD } = require('../site/model');
 
 function factors() {
   return { rush_att: 1, ypc: 1, rush_td: 1, pass_att: 1, comp_pct: 1, ypa: 1, pass_td: 1, int: 1 };
@@ -37,17 +37,19 @@ const qb = {
   adv: {},
 };
 
-test('gamma helpers match known values and quantiles', () => {
+test('normal outcome quantiles match a widened CV', () => {
   assert.ok(Math.abs(lgamma(1)) < 1e-10);
   assert.ok(Math.abs(lgamma(5) - Math.log(24)) < 1e-8);
+  assert.equal(PREDICTIVE_SPREAD, 1.25);
   const dist = makeDist(15, 0.4);
-  assert.ok(Math.abs(dist.cdf(dist.quantile(0.1)) - 0.1) < 0.02);
-  assert.ok(Math.abs(dist.cdf(dist.quantile(0.5)) - 0.5) < 0.02);
-  assert.ok(Math.abs(dist.cdf(dist.quantile(0.9)) - 0.9) < 0.02);
-  assert.ok(dist.quantile(0.1) < dist.quantile(0.5));
-  assert.ok(dist.quantile(0.5) < dist.mean); // gamma is right-skewed
-  assert.ok(dist.quantile(0.9) > dist.mean);
-  assert.ok(dist.pOver(dist.mean) > 0 && dist.pOver(dist.mean) < 0.6);
+  const sd = 15 * 0.4 * PREDICTIVE_SPREAD;
+  assert.ok(Math.abs(dist.sd - sd) < 1e-9);
+  assert.ok(Math.abs(dist.quantile(0.5) - 15) < 1e-6);
+  assert.ok(Math.abs(dist.quantile(0.1) - (15 + sd * -1.28155156554)) < 1e-4);
+  assert.ok(Math.abs(dist.quantile(0.9) - (15 + sd * 1.28155156554)) < 1e-4);
+  assert.ok(Math.abs(dist.cdf(dist.quantile(0.1)) - 0.1) < 1e-6);
+  assert.ok(Math.abs(dist.pOver(15) - 0.5) < 1e-6);
+  assert.ok(dist.pdf(15) > dist.pdf(15 + sd));
 });
 
 test('project scores a starter and sends a bye team to zero', () => {

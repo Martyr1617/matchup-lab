@@ -491,7 +491,7 @@
           <div class="card-title">Probability of clearing</div>
           <div class="thresholds">${ths}</div>
           <div class="bb-row"><div><span class="k">Boom</span> <b class="boom">${pct(pr.bb.boom)}</b> <span class="s">≥ ${pr.bb.boomAt} pts</span></div><div><span class="k">Bust</span> <b class="bust">${pct(pr.bb.bust)}</b> <span class="s">&lt; ${pr.bb.bustAt} pts</span></div></div>
-          <p class="sub" style="margin-top:var(--space-4)">Spread reflects ${esc(pl.name.split(' ').slice(-1)[0])}'s week-to-week volatility (CV ${f2(pl.cv)}) blended with a ${pl.pos} prior. Matchup: <span class="grade ${pr.grade.cls}">${pr.grade.label} · ${rkOrd(pr.grade.rk)} most pts allowed to ${pl.pos}</span></p>
+          <p class="sub" style="margin-top:var(--space-4)">Spread reflects ${esc(pl.name.split(' ').slice(-1)[0])}'s week-to-week volatility (CV ${f2(pl.cv)}) blended with a ${pl.pos} prior, widened 1.25× for forecast error. Matchup: <span class="grade ${pr.grade.cls}">${pr.grade.label} · ${rkOrd(pr.grade.rk)} most pts allowed to ${pl.pos}</span></p>
         </div>
       </div>
 

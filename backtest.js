@@ -91,6 +91,6 @@ const f = x => x.toFixed(2);
 
 console.log(`Backtest  ${data.meta.season} weeks 2–${last}  ${n} player-weeks  (PPR)`);
 console.log(`Error     MAE ${f(mae)}   RMSE ${f(rmse)}   bias (pred−actual) ${f(bias)}`);
-console.log(`Coverage  P10–P90 ${pct(cover)}  (a calibrated gamma is about 80%)`);
+console.log(`Coverage  P10–P90 ${pct(cover)}  (the calibrated normal is about 80% on a full season)`);
 console.log(`Boom      predicted ${pct(boomPred)}   happened ${pct(boomObs)}`);
 console.log(`Bust      predicted ${pct(bustPred)}   happened ${pct(bustObs)}`);

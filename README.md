@@ -24,3 +24,5 @@ The projection math lives in `site/model.js`. The page loads it with a script ta
 `node backtest.js` scores every completed week from week 2 on. For each player-week it rebuilds usage from that player's earlier games only, projects the week with `site/model.js`, and compares the projection to the actual PPR points in the log. It prints mean absolute error, root-mean-square error, bias, how often the actual result landed between P10 and P90, and boom/bust calibration (the average predicted probability versus how often it happened).
 
 Opponent factors are the published season-to-date table, so they include later weeks. Player usage does not. The script reads `site/data.json`, is not part of CI, and exits with an error if there is nothing to score.
+
+The outcome distribution is a normal centered on the projection. Player CV is widened by 1.25× (`PREDICTIVE_SPREAD` in `site/model.js`). That factor is the 2024–2025 forecast-error ratio (about 1.16× the CV-implied spread) plus a small allowance because the residuals are a little heavier than a normal. It was not fit to the current season's handful of weeks.
