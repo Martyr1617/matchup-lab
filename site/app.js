@@ -1024,22 +1024,77 @@
 
   // ---------- Boot ----------
   const REMOTE = 'https://raw.githubusercontent.com/Martyr1617/matchup-lab/data/';
+  const STALE_HOURS = 12;
+  function parseGenerated(s) {
+    if (!s) return null;
+    const t = Date.parse(String(s).trim().replace(/ UTC$/, 'Z').replace(' ', 'T'));
+    return Number.isFinite(t) ? t : null;
+  }
+  function agePhrase(then) {
+    const h = (Date.now() - then) / 36e5;
+    if (h < 1) return `${Math.max(1, Math.round(h * 60))} minutes`;
+    if (h < 36) return `${Math.round(h)} hours`;
+    return `${Math.round(h / 24)} days`;
+  }
+  function rememberGenerated(data) {
+    const g = data && data.meta && data.meta.generated;
+    if (!g) return;
+    try { localStorage.setItem('ml-data-generated', g); } catch (e) { /* private mode */ }
+  }
+  function storedGeneratedAge() {
+    try {
+      const t = parseGenerated(localStorage.getItem('ml-data-generated'));
+      return t == null ? '' : ` The last copy this browser loaded was generated ${agePhrase(t)} ago.`;
+    } catch (e) { return ''; }
+  }
+  function showDataStatus(text, bad) {
+    const el = $('#dataStatus');
+    if (!el) return;
+    if (!text) { el.hidden = true; el.textContent = ''; return; }
+    el.hidden = false;
+    el.className = bad ? 'notice bad' : 'notice';
+    el.textContent = text;
+  }
+  function noteDataFreshness(data, src) {
+    const t = parseGenerated(data.meta && data.meta.generated);
+    const bits = [];
+    if (src === 'local') bits.push('Showing the bundled fallback because the live data file could not be loaded.');
+    if (t != null && (Date.now() - t) > STALE_HOURS * 36e5) {
+      bits.push(`This data was generated ${agePhrase(t)} ago (${data.meta.generated}), more than ${STALE_HOURS} hours old.`);
+    }
+    rememberGenerated(data);
+    showDataStatus(bits.join(' '), false);
+  }
+  function usableData(d) {
+    return !!(d && Array.isArray(d.players) && d.players.length >= 100 && d.meta);
+  }
   async function boot() {
     initTheme();
     $('#boardBody').innerHTML = Array.from({ length: 8 }, () => `<tr><td colspan="9"><div class="skeleton" style="height:40px">&nbsp;</div></td></tr>`).join('');
+    const get = async (url, ms = 15000) => {
+      const ctl = new AbortController(); const to = setTimeout(() => ctl.abort(), ms);
+      try { const res = await fetch(url, { cache: 'no-cache', signal: ctl.signal }); if (!res.ok) throw new Error('HTTP ' + res.status); return await res.json(); }
+      finally { clearTimeout(to); }
+    };
+    // Fresh data is rebuilt every few hours; the copy shipped with the site is the fallback.
     try {
-      const get = async (url, ms = 15000) => {
-        const ctl = new AbortController(); const to = setTimeout(() => ctl.abort(), ms);
-        try { const res = await fetch(url, { cache: 'no-cache', signal: ctl.signal }); if (!res.ok) throw new Error('HTTP ' + res.status); return await res.json(); }
-        finally { clearTimeout(to); }
-      };
-      const local = () => get('data.json?v=' + (window.ML_VER || Date.now()));
-      // Fresh data is rebuilt every 3 hours by a free GitHub Actions workflow; the bundled copy is the fallback.
-      try { const d = await get(REMOTE + 'data.json?t=' + Math.floor(Date.now() / 6e5), 8000); if (!d || !Array.isArray(d.players) || d.players.length < 100) throw new Error('bad remote'); state.data = d; state.dataSrc = 'remote'; }
-      catch (e0) { try { state.data = await local(); } catch (e1) { state.data = await local(); } state.dataSrc = 'local'; }
-    } catch (e) {
-      $('#boardBody').innerHTML = `<tr class="empty-row"><td colspan="9">Couldn't load this week's data (${esc(e.name === 'AbortError' ? 'timed out' : e.message)}). <a href="" onclick="location.reload();return false">Try again</a></td></tr>`; return;
+      const d = await get(REMOTE + 'data.json?t=' + Math.floor(Date.now() / 6e5), 8000);
+      if (!usableData(d)) throw new Error('bad remote');
+      state.data = d; state.dataSrc = 'remote';
+    } catch (e0) {
+      try {
+        const d = await get('data.json?v=' + (window.ML_VER || Date.now()));
+        if (!usableData(d)) throw new Error('bad local');
+        state.data = d; state.dataSrc = 'local';
+      } catch (e1) {
+        const why = e0.name === 'AbortError' ? 'timed out' : (e0.message || 'request failed');
+        const msg = `Data unavailable. Live projections could not be loaded (${why}), and this page has no usable bundled data.json.${storedGeneratedAge()}`;
+        showDataStatus(msg, true);
+        $('#boardBody').innerHTML = `<tr class="empty-row"><td colspan="9">${esc(msg)} <a href="" onclick="location.reload();return false">Try again</a></td></tr>`;
+        return;
+      }
     }
+    noteDataFreshness(state.data, state.dataSrc);
     // Defense in depth: position and team codes are interpolated into class names / HTML, so allowlist them
     { const POS = /^(QB|RB|WR|TE)$/, TM = /^[A-Z]{2,3}$/;
       state.data.players = state.data.players.filter(p => POS.test(p.pos)).map(p => ({ ...p, team: TM.test(p.team) ? p.team : '' }));
