@@ -2,6 +2,8 @@
 
 Builds the data behind Matchup Lab, a weekly fantasy football projection app. Every push to `main` publishes `site/` to GitHub Pages at <https://martyr1617.github.io/matchup-lab/>. [matchup-lab.pplx.app](https://matchup-lab.pplx.app) is a separate host and does not update from this repository.
 
+GitHub Pages has to be turned on once by a repository admin. Open **Settings → Pages → Build and deployment** and set **Source** to **GitHub Actions**. The workflow cannot do that step: both the Actions token and the automation token get "Resource not accessible by integration" from the Pages API. After that setting is saved, the next push to `main` (or a re-run of "Deploy Matchup Lab site") publishes the site.
+
 A scheduled GitHub Actions workflow runs every hour. Each run:
 
 1. Downloads public nflverse / ffverse data: player and team stats, play-by-play, snap counts, Next Gen Stats, PFR advanced stats, expected fantasy points, injuries and the schedule.
