@@ -1,7 +1,7 @@
 /* App shell is stamped so a deploy swaps in a new cache. Projection files stay
    network-first in their own cache, so an update does not discard the last good
    data.json or market.json when the network is down. */
-const VER = 'bc8ab48aaa';
+const VER = 'ac8c0d0186';
 const SHELL_CACHE = 'ml-shell-' + VER;
 const DATA_CACHE = 'ml-data';
 const VERSIONED = ['styles.css', 'app.js', 'model.js', 'team.js', 'glossary.js', 'chart.umd.min.js'];
@@ -72,8 +72,6 @@ self.addEventListener('fetch', event => {
     return;
   }
   if (url.origin !== self.location.origin) return;
-  // The icon preview is temporary and must not be stored as the app shell.
-  if (url.pathname.includes('/icon-options')) return;
   if (event.request.mode === 'navigate') {
     event.respondWith((async () => {
       const cache = await caches.open(SHELL_CACHE);
