@@ -1,7 +1,9 @@
 """Build data.json for the fantasy projection app from nflverse 2026 data."""
-import json, math
+import json, math, os
 import pandas as pd
 import numpy as np
+
+import build_advanced
 
 SEASON = 2026
 D = 'data/'
@@ -292,7 +294,6 @@ def main():
 
 
     # ---------------- Platform ID mapping (Sleeper / ESPN / Yahoo) ----------------
-    import os
     sl = json.load(open(D + 'sleeper_players.json')) if os.path.exists(D + 'sleeper_players.json') else {}
     ids_by_gsis = {}
     for sid, sp_ in sl.items():
@@ -350,7 +351,6 @@ def main():
         if isinstance(o, (np.integer,)): return int(o)
         return o
 
-    import build_advanced
     adv, team_ctx, avail = build_advanced.build(CUR_WEEK, players, season=SEASON)
     for pl in players:
         pl['adv'] = adv.get(pl['id'])
@@ -367,8 +367,6 @@ def main():
     with open('site/data.json', 'w') as f:
         json.dump(out, f, separators=(',', ':'))
     print('players', len(players), 'weeks', CUR_WEEK, 'next', NEXT_WEEK, 'size', round(len(json.dumps(out))/1e6, 2), 'MB')
-    print({k: v for k, v in lg.items()})
-    print('DEN def', json.dumps(clean(defense['DEN']['factors'])), defense['DEN']['ranks'])
 
 
 if __name__ == '__main__':
