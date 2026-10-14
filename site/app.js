@@ -19,11 +19,17 @@
     const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
     state.theme = prefersDark ? 'dark' : 'light';
     document.documentElement.setAttribute('data-theme', state.theme);
+    applyChromeColor();
     $('#themeToggle').addEventListener('click', () => {
       state.theme = state.theme === 'dark' ? 'light' : 'dark';
       document.documentElement.setAttribute('data-theme', state.theme);
+      applyChromeColor();
       if (state.view === 'player' && state.player) renderPlayer(state.player);
     });
+  }
+  function applyChromeColor() {
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', state.theme === 'dark' ? '#14171c' : '#ffffff');
   }
 
   const NA = '<span class="na">Unavailable</span>';

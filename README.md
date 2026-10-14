@@ -12,12 +12,14 @@ A scheduled GitHub Actions workflow runs every hour. Each run:
 
 The Pages site keeps loading those files from `https://raw.githubusercontent.com/Martyr1617/matchup-lab/data/`. The copies committed under `site/` are the fallback when that branch cannot be reached. The hourly refresh does not deploy the page.
 
+The same `site/` directory is the installable app. On GitHub Pages the manifest `start_url` and `scope` are `/matchup-lab/`. A service worker caches the app shell and always tries the network first for `data.json` and `market.json`, falling back to the last copy it saved. A later Capacitor wrap for the App Store or Google Play should use `webDir: "site"`. The worker registers a relative `sw.js` and caches relative shell URLs, so that wrap can serve the files at `/` and should set the manifest `start_url` and `scope` to `/` instead of the Pages subpath.
+
 To refresh right away, go to Actions → "Refresh Matchup Lab data" → Run workflow. To republish the page, go to Actions → "Deploy Matchup Lab site" → Run workflow, or push to `main`.
 
 ## Tests
 
 ```
-node --test test/model.test.js
+node --test test/model.test.js test/pwa.test.js
 python3 -m pytest tests
 ```
 
