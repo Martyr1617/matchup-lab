@@ -39,6 +39,8 @@ test('service worker versions the shell and prefers fresh projection files', () 
   assert.match(dataFn, /await fetch\(request\)/);
   assert.match(dataFn, /cache\.put\(stable/);
   assert.match(dataFn, /cache\.match\(stable\)/);
+  assert.match(sw, /pathname\.includes\('\/icon-options'\)/);
+  assert.doesNotMatch(read('index.html'), /icon-options/);
 });
 
 test('the page registers the worker and declares an iOS icon', () => {
