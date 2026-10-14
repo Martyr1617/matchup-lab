@@ -13,7 +13,7 @@ test('manifest is installable at the GitHub Pages subpath', () => {
   assert.equal(manifest.display, 'standalone');
   assert.equal(manifest.start_url, '/matchup-lab/');
   assert.equal(manifest.scope, '/matchup-lab/');
-  assert.equal(manifest.theme_color, '#ffffff');
+  assert.equal(manifest.theme_color, '#001E4A');
   assert.equal(manifest.background_color, '#f3f4f0');
   assert.ok(manifest.start_url.startsWith(manifest.scope));
   const icons = Object.fromEntries(manifest.icons.map(icon => [icon.purpose + ':' + icon.sizes, icon.src]));
@@ -52,6 +52,8 @@ test('the page registers the worker and declares an iOS icon', () => {
   assert.match(html, /apple-mobile-web-app-status-bar-style" content="black-translucent"/);
   assert.match(html, /apple-mobile-web-app-title" content="Matchup Lab"/);
   assert.match(html, /serviceWorker\.register\('sw\.js'\)/);
+  assert.match(html, /rel="icon" href="icon\.svg"/);
+  assert.doesNotMatch(html, /ellipse/);
   const css = read('styles.css');
   assert.match(css, /safe-area-inset-top/);
   assert.match(css, /safe-area-inset-bottom/);

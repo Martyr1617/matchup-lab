@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Matchup Lab">
+  <rect width="512" height="512" rx="92" fill="#001E4A"/>
+  <clipPath id="glyph">
+    <rect x="60" y="118" width="420" height="268"/>
+  </clipPath>
+  <g clip-path="url(#glyph)" fill="none" stroke="#FFFFFF" stroke-linecap="butt" stroke-linejoin="miter" stroke-miterlimit="3">
+    <path stroke-width="50" d="M100 392 L100 108 L196 240 L292 108 L292 392"/>
+    <path stroke-width="48" d="M364 108 L364 362 L464 362"/>
+  </g>
+  <clipPath id="left-stem">
+    <rect x="75" y="132" width="50" height="246"/>
+  </clipPath>
+  <clipPath id="right-stem">
+    <rect x="267" y="132" width="50" height="246"/>
+  </clipPath>
+  <g fill="none" stroke="#6ED214" stroke-width="11" stroke-linecap="butt">
+    <g clip-path="url(#left-stem)">
+      <line x1="84" y1="142" x2="116" y2="168"/>
+      <line x1="84" y1="174" x2="116" y2="200"/>
+      <line x1="84" y1="206" x2="116" y2="232"/>
+      <line x1="84" y1="238" x2="116" y2="264"/>
+      <line x1="84" y1="270" x2="116" y2="296"/>
+      <line x1="84" y1="302" x2="116" y2="328"/>
+      <line x1="84" y1="334" x2="116" y2="360"/>
+    </g>
+    <g clip-path="url(#right-stem)">
+      <line x1="308" y1="142" x2="276" y2="168"/>
+      <line x1="308" y1="174" x2="276" y2="200"/>
+      <line x1="308" y1="206" x2="276" y2="232"/>
+      <line x1="308" y1="238" x2="276" y2="264"/>
+      <line x1="308" y1="270" x2="276" y2="296"/>
+      <line x1="308" y1="302" x2="276" y2="328"/>
+      <line x1="308" y1="334" x2="276" y2="360"/>
+    </g>
+  </g>
+  <g fill="#6ED214">
+    <rect x="187" y="294" width="18" height="8" rx="1"/>
+    <rect x="187" y="316" width="18" height="8" rx="1"/>
+    <rect x="187" y="338" width="18" height="8" rx="1"/>
+    <rect x="187" y="360" width="18" height="8" rx="1"/>
+    <rect x="187" y="378" width="18" height="8" rx="1"/>
+  </g>
+</svg>

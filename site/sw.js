@@ -1,7 +1,7 @@
 /* App shell is stamped so a deploy swaps in a new cache. Projection files stay
    network-first in their own cache, so an update does not discard the last good
    data.json or market.json when the network is down. */
-const VER = '001290685f';
+const VER = 'bc8ab48aaa';
 const SHELL_CACHE = 'ml-shell-' + VER;
 const DATA_CACHE = 'ml-data';
 const VERSIONED = ['styles.css', 'app.js', 'model.js', 'team.js', 'glossary.js', 'chart.umd.min.js'];
@@ -12,6 +12,8 @@ const SHELL = [
   './icon-512.png',
   './icon-512-maskable.png',
   './apple-touch-icon.png',
+  './icon.svg',
+  './favicon.ico',
 ].concat(VERSIONED.map(name => './' + name), VERSIONED.map(name => './' + name + '?v=' + VER));
 
 self.addEventListener('install', event => {

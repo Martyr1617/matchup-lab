@@ -29,7 +29,7 @@
   }
   function applyChromeColor() {
     const meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute('content', state.theme === 'dark' ? '#14171c' : '#ffffff');
+    if (meta) meta.setAttribute('content', state.theme === 'dark' ? '#001E4A' : '#ffffff');
   }
 
   const NA = '<span class="na">Unavailable</span>';
