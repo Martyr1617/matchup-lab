@@ -64,7 +64,7 @@
     rows.push(['Red-zone share (in 20 / in 10)', A.rz20_share != null ? `${pct(A.rz20_share)} / ${pv(A.rz10_share)}` : NA], eff,
       ['xFP / g · FPOE / g', A.xfp_pg != null ? `${f1(A.xfp_pg)} · ${sgn(A.fpoe_pg, f1)}` : NA],
       ['Projection', f1(pr.pts)], ['Market-implied pts', pr.mktPts != null ? f1(pr.mktPts) : '<span class="na">No props</span>'],
-      ['P10 – P90', `${f1(pr.dist.quantile(0.1))} – ${f1(pr.dist.quantile(0.9))}`], ['Boom · bust', `${pct(pr.bb.boom)} · ${pct(pr.bb.bust)}`]);
+      ['Floor–Ceiling', `${f1(pr.dist.quantile(0.1))} – ${f1(pr.dist.quantile(0.9))}`], ['Boom · bust', `${pct(pr.bb.boom)} · ${pct(pr.bb.bust)}`]);
     return rows;
   }
   function gameScriptNote(pl, vg) {
@@ -447,7 +447,7 @@
         ${pr.bye ? '' : `<div class="proj-hero">
           <div class="lbl">Week ${state.week} projection · ${S.name}</div>
           <div class="big">${f1(pr.pts)}</div>
-          <div class="rng">P10 ${f1(pr.floor)} · P90 ${f1(pr.ceil)} · Boom ${pct(pr.bb.boom)} · Bust ${pct(pr.bb.bust)}${pr.mktPts != null ? ` · Market ${f1(pr.mktPts)}` : ''} &nbsp;|&nbsp; ${pr.home ? 'vs' : '@'} ${esc(tn(pr.opp))} · ${fmtKick(pr.game)}</div>
+          <div class="rng">Floor ${f1(pr.floor)} · Ceiling ${f1(pr.ceil)} · Boom ${pct(pr.bb.boom)} · Bust ${pct(pr.bb.bust)}${pr.mktPts != null ? ` · Market ${f1(pr.mktPts)}` : ''} &nbsp;|&nbsp; ${pr.home ? 'vs' : '@'} ${esc(tn(pr.opp))} · ${fmtKick(pr.game)}</div>
           ${weatherText(pr.game) ? `<div class="rng wx-line">Weather: ${esc(weatherText(pr.game))}${pr.wx && pr.wx.tags.length ? ` — ${esc(pr.wx.tags.join(', '))}, projection ${pr.wxDelta < 0 ? 'lowered' : 'raised'} ${f1(Math.abs(pr.wxDelta))} pts` : ''}</div>` : ''}
         </div>`}
       </div>`;
@@ -466,7 +466,8 @@
       : injP ? `<div class="notice">⚠ Injury status: ${injTxt}.</div>` : '';
 
     const d = pr.dist;
-    const pcts = [0.1, 0.25, 0.5, 0.75, 0.9].map(p => `<div class="pct"><div class="k">P${Math.round(p * 100)}</div><div class="v">${f1(d.quantile(p))}</div></div>`).join('');
+    const pctLabel = { 0.1: 'Floor', 0.25: 'P25', 0.5: 'P50', 0.75: 'P75', 0.9: 'Ceiling' };
+    const pcts = [0.1, 0.25, 0.5, 0.75, 0.9].map(p => `<div class="pct"><div class="k">${pctLabel[p]}</div><div class="v">${f1(d.quantile(p))}</div></div>`).join('');
     const ths = [10, 15, 20, 25, 30].map(x => { const p = d.pOver(x); return `<div class="th-row"><span>≥ ${x} pts</span><div class="bar"><i style="width:${Math.round(p * 100)}%"></i></div><span class="v">${pct(p)}</span></div>`; }).join('');
 
     const compRows = compRowsFor(pl, pr, S);
@@ -580,7 +581,7 @@
       + mrow('Opp pressure rate', op.pressure_generated != null ? pct(op.pressure_generated) + rk(op.pressure_generated_rk, 'most') : NA, `${esc(pr.opp)} pass rush`);
     if (pl.pos === 'QB') c += mrow('Time to throw', A.ttt != null ? f2(A.ttt) + 's' : NA, 'NGS') + mrow('Pressured rate', pv(A.pressured_rate), 'his dropbacks');
     const d = pr.dist;
-    c += mrow('P10 / P50 / P90', `${f1(d.quantile(0.1))} / ${f1(d.quantile(0.5))} / ${f1(d.quantile(0.9))}`, '') + mrow('Boom / bust', `<span class="boom">${pct(pr.bb.boom)}</span> / <span class="bust">${pct(pr.bb.bust)}</span>`, `≥${pr.bb.boomAt} / <${pr.bb.bustAt} pts`);
+    c += mrow('Floor / Median / Ceiling', `${f1(d.quantile(0.1))} / ${f1(d.quantile(0.5))} / ${f1(d.quantile(0.9))}`, '') + mrow('Boom / bust', `<span class="boom">${pct(pr.bb.boom)}</span> / <span class="bust">${pct(pr.bb.bust)}</span>`, `≥${pr.bb.boomAt} / <${pr.bb.bustAt} pts`);
     const card4 = `<div class="card layer"><div class="card-title"><span class="lnum">4</span>Context &amp; distribution</div><div class="metrics">${c}</div></div>`;
     return `<div class="grid-2 layers">${card1}${card2}${card3}${card4}</div>`;
   }
@@ -640,7 +641,7 @@
           ctx.fillStyle = muted; ctx.font = '600 11px Satoshi, sans-serif'; ctx.textAlign = align;
           ctx.fillText(label, px + dx, chartArea.top - 4); ctx.restore();
         };
-        draw(p20, `P10 ${f1(p20)}`, [3, 3], 'right', -5); draw(mean, `Proj ${f1(mean)}`, [], 'center', 0); draw(p80, `P90 ${f1(p80)}`, [3, 3], 'left', 5);
+        draw(p20, `Floor ${f1(p20)}`, [3, 3], 'right', -5); draw(mean, `Proj ${f1(mean)}`, [], 'center', 0); draw(p80, `Ceiling ${f1(p80)}`, [3, 3], 'left', 5);
       }
     };
     chart = new Chart(canvas, {
