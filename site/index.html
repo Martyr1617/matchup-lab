@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Matchup Lab — Weekly Fantasy Football Projections</title>
 <meta name="description" content="Weekly fantasy football projections built from player usage, efficiency, and opponent defensive tendencies, with probability ranges and a Top 20 board." />
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2314171c'/%3E%3Cellipse cx='16' cy='16' rx='11' ry='6.5' transform='rotate(-35 16 16)' fill='none' stroke='%237ddc5a' stroke-width='2.2'/%3E%3Cpath d='M12 20 L20 12 M13.5 15.5l1.6 1.6M15.5 13.5l1.6 1.6M17.5 11.5l1.6 1.6' stroke='%237ddc5a' stroke-width='1.8' stroke-linecap='round'/%3E%3C/svg%3E" />
@@ -10,12 +10,13 @@
 <link href="https://api.fontshare.com/v2/css?f[]=cabinet-grotesk@700,800&f[]=satoshi@400,500,700&display=swap" rel="stylesheet" media="print" onload="this.media='all'" />
 <noscript><link href="https://api.fontshare.com/v2/css?f[]=cabinet-grotesk@700,800&f[]=satoshi@400,500,700&display=swap" rel="stylesheet" /></noscript>
 <link rel="manifest" href="manifest.webmanifest" />
-<link rel="apple-touch-icon" href="apple-touch-icon.png" />
+<link rel="apple-touch-icon" href="apple-touch-icon.png" sizes="180x180" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="Matchup Lab" />
-<meta name="theme-color" content="#14171c" />
-<link rel="stylesheet" href="styles.css?v=c6e2be864d" />
+<meta name="theme-color" content="#ffffff" />
+<link rel="stylesheet" href="styles.css?v=2409c04f62" />
 </head>
 <body>
 <div class="app">
@@ -211,11 +212,14 @@
   </main>
 </div>
 
-<script>window.ML_VER="c6e2be864d";</script>
-<script src="chart.umd.min.js?v=c6e2be864d"></script>
-<script src="team.js?v=c6e2be864d"></script>
-<script src="glossary.js?v=c6e2be864d"></script>
-<script src="model.js?v=c6e2be864d"></script>
-<script src="app.js?v=c6e2be864d"></script>
+<script>window.ML_VER="2409c04f62";</script>
+<script src="chart.umd.min.js?v=2409c04f62"></script>
+<script src="team.js?v=2409c04f62"></script>
+<script src="glossary.js?v=2409c04f62"></script>
+<script src="model.js?v=2409c04f62"></script>
+<script src="app.js?v=2409c04f62"></script>
+<script>
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+</script>
 </body>
 </html>
