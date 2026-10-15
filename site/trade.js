@@ -4,17 +4,31 @@
    Formula
    -------
    Rest of season, for each scoring format (PPR, half-PPR, standard):
-     Sum the existing weekly projection over every remaining regular-season
-     game (bye weeks add nothing). One projection per week is scored three
-     ways from the same counting stats.
+     The per-game rate is the average weekly projection on weeks that are
+     not a bye. Every player is then credited the same number of games,
+     from the upcoming week through week 18. A bye is not a missed game
+     and does not shrink that total, so bye timing does not favor anyone.
+     One projection per week is scored three ways from the same counting stats.
 
-   Games missed:
-     IR, PUP, or suspended: the rest of this season.
-     Out: 1 game. Doubtful: 0.75. Questionable: 0.25.
-     Limited or DNP practice, with no worse report: 0.25.
-     A news headline raises the discount only when it states one of those
-     statuses. A vague injury blurb does not.
-     Adjusted points = raw points × max(0, games − missed) / games.
+   Games missed come off that shared total:
+     Questionable, or limited / DNP practice: 0.25 of a game.
+     Doubtful: 0.75. Out: 1 game.
+     IR or PUP: at least 4 games from the last game played. If that minimum
+     is already served and the player is still on IR, count two more games
+     unless a headline says he is practicing or designated to return
+     (then one more game) or names a return week. Weeks 15–18 still count
+     when he is back before the fantasy playoffs.
+     A long-term injury (ACL, Achilles, season-ending) removes the rest of
+     this season in redraft. Dynasty keeps a healthy outlook and discounts
+     it by 7 percent.
+     The first two games back from a multi-week layoff count at 0.80 and 0.90.
+     A vague injury blurb does not change the timeline.
+
+   Hurt players, and anyone with no current-week projection, use a healthy
+   baseline instead of a depressed or missing 2026 sample: 65 percent of the
+   last season with at least 6 games, 35 percent of a games-weighted career.
+   Value = that per-game rate × expected games remaining. The card shows the
+   value before and after the injury discount.
 
    Scarcity is the replacement line for a 12-team league:
      1QB:     QB12, RB30, WR36, TE12
@@ -27,10 +41,14 @@
      their points are to the replacement line.
 
    Dynasty is 60% rest-of-season (after the injury discount) and 40% a
-   next-season outlook: current points per game × 17 × age curve × role
+   next-season outlook: healthy points per game × 17 × age curve × role
    (volume versus the positional median, 0.75–1.15) × team offense
-   (points per game versus the league, clamped 0.90–1.10). An IR tag
-   zeroes this season and leaves the next-season piece.
+   (points per game versus the league, clamped 0.90–1.10). A short-term
+   injury discounts only this season. A long-term injury discounts the
+   whole dynasty figure by 7 percent.
+
+   Every team's starting quarterback, top running back, top receivers, and
+   starting tight end stay searchable even when they are outside the top 150.
 
    Consolidation: each extra player on the deeper side discounts that
    side by 4% of its total, capped at 12%. A 2-for-1 is a 4% depth
@@ -140,6 +158,7 @@
   }
 
   function roleFactor(pl, medians) {
+    if (pl && pl.tradeOnly && !(volumeOf(pl) > 0)) return 1;
     const med = medians[pl.pos];
     if (!med) return 1;
     const ratio = volumeOf(pl) / med;
@@ -160,6 +179,15 @@
       + num(comps.fl) * S.fl + num(comps.two) * S.two;
   }
 
+  const IR_MIN = 4;
+  const LONG_RE = /\bacl\b|achilles|pectoral|season-?ending|torn |rupture/;
+  const LONG_DYNASTY = 0.93;
+
+  function gamesBasis(data) {
+    const start = (data && data.meta && data.meta.next_week) || 1;
+    return Math.max(1, 18 - start + 1);
+  }
+
   function remainingWeeks(data) {
     const start = (data.meta && data.meta.next_week) || 1;
     const weeks = [];
@@ -167,19 +195,116 @@
     return weeks;
   }
 
+  function gameEq(full, miss, ramp) {
+    const play = Math.max(0, full - (miss || 0));
+    if (!ramp) return play;
+    let eq = 0;
+    const whole = Math.floor(play + 1e-9);
+    const frac = play - whole;
+    const factor = i => (i === 1 ? 0.8 : i === 2 ? 0.9 : 1);
+    for (let i = 1; i <= whole; i++) eq += factor(i);
+    if (frac > 1e-9) eq += frac * factor(whole + 1);
+    return eq;
+  }
+
+  function parseNews(text) {
+    const s = String(text || '').toLowerCase();
+    const out = {};
+    if (!s) return out;
+    if (/out for the (rest of the )?season|season-ending|season ending|torn acl|achilles/.test(s)) out.long = true;
+    let m = s.match(/(?:return(?:s|ing)?|back|targeting|target(?:ing)?|debut)\D{0,30}week\s*(\d{1,2})/);
+    if (!m) m = s.match(/week\s*(\d{1,2})\D{0,30}(?:return|back|debut)/);
+    if (m) {
+      const wk = Number(m[1]);
+      if (wk >= 1 && wk <= 18) out.returnWeek = wk;
+    }
+    const span = s.match(/(\d{1,2})\s*(?:-|to|–)\s*(\d{1,2})\s*weeks?/);
+    if (span) out.missWeeks = Number(span[2]);
+    else {
+      const one = s.match(/(\d{1,2})\s*weeks?/);
+      if (one && /out|miss|sideline|return/.test(s)) out.missWeeks = Number(one[1]);
+    }
+    if (/returning to practice|returned to practice|return to practice|practicing again|full participant/.test(s)) out.practicing = true;
+    if (/designated to return|designated for return/.test(s)) out.designated = true;
+    return out;
+  }
+
+  function classifyStatus(status, body) {
+    const s = String(status || '').toLowerCase();
+    const b = String(body || '').toLowerCase();
+    const long = LONG_RE.test(s + ' ' + b);
+    let kind = 'ok';
+    if (/suspend/.test(s)) kind = 'susp';
+    else if (/\bir\b|injured reserve|\bpup\b/.test(s)) kind = 'ir';
+    else if (/doubtful/.test(s)) kind = 'd';
+    else if (/\bout\b/.test(s)) kind = 'out';
+    else if (/questionable|limited|did not practice|\bdnp\b/.test(s)) kind = 'q';
+    return { kind, long };
+  }
+
+  function injuryPlan(input) {
+    input = input || {};
+    const nextWeek = input.nextWeek || 1;
+    const basis = input.basis || 1;
+    const lastWeek = input.lastWeek || 0;
+    const news = Object.assign({}, ...(input.news || []).map(parseNews));
+    const cls = classifyStatus(input.status, input.body);
+    const long = !!(news.long || cls.long);
+    const label = input.status || (long ? 'IR' : '');
+    const detail = input.body || '';
+    if (long || (cls.kind === 'susp' && !news.missWeeks && !news.returnWeek)) {
+      return {
+        serious: true, long: true, miss: basis, eq: 0, full: basis, ramp: false,
+        ret: null, label, detail, note: 'Out for the season', kind: cls.kind || 'ir',
+      };
+    }
+    let ret = null;
+    let miss = 0;
+    if (news.returnWeek) ret = news.returnWeek;
+    else if (news.missWeeks) miss = news.missWeeks;
+    else if (cls.kind === 'ir') {
+      const served = lastWeek ? Math.max(0, nextWeek - lastWeek - 1) : 0;
+      const remainMin = Math.max(0, IR_MIN - served);
+      if (news.practicing || news.designated) ret = nextWeek + Math.max(1, remainMin);
+      else if (served >= IR_MIN) ret = nextWeek + 2;
+      else ret = nextWeek + remainMin;
+    } else if (cls.kind === 'out') miss = 1;
+    else if (cls.kind === 'd') miss = 0.75;
+    else if (cls.kind === 'q') miss = 0.25;
+    if (ret != null) miss = Math.max(0, Math.min(basis, ret - nextWeek));
+    miss = Math.max(0, Math.min(basis, miss));
+    const served = lastWeek ? Math.max(0, nextWeek - lastWeek - 1) : 0;
+    const ramp = cls.kind === 'ir' || served + miss >= 2;
+    const serious = cls.kind === 'ir' || cls.kind === 'out' || cls.kind === 'd' || cls.kind === 'susp';
+    let note = '';
+    if (ret) note = 'Back week ' + ret;
+    else if (miss >= 1) note = 'Misses about ' + (miss % 1 ? miss : miss) + (miss === 1 ? ' game' : ' games');
+    else if (miss > 0) note = 'Small injury discount';
+    return {
+      serious, long: false, miss, eq: gameEq(basis, miss, ramp && serious), full: basis,
+      ramp: ramp && serious, ret, label, detail, note, kind: cls.kind,
+    };
+  }
+
   function sumOutlook(pl, data, project, scoringTable) {
     const weeks = remainingWeeks(data);
-    const raw = { ppr: 0, half: 0, std: 0 };
-    let games = 0;
+    const basis = weeks.length;
+    const sum = { ppr: 0, half: 0, std: 0 };
+    let samples = 0;
     const env = { data };
+    if (!pl || pl.tradeOnly) return { raw: { ppr: 0, half: 0, std: 0 }, games: basis, samples: 0 };
     for (const week of weeks) {
       let pr;
       try { pr = project(pl, week, 'ppr', env); } catch (e) { continue; }
       if (!pr || pr.bye || !pr.comps) continue;
-      games += 1;
-      for (const key of SCORINGS) raw[key] += pointsOf(pr.comps, scoringTable[key]);
+      samples += 1;
+      for (const key of SCORINGS) sum[key] += pointsOf(pr.comps, scoringTable[key]);
     }
-    return { raw, games };
+    const raw = { ppr: 0, half: 0, std: 0 };
+    if (samples > 0) {
+      for (const key of SCORINGS) raw[key] = (sum[key] / samples) * basis;
+    }
+    return { raw, games: basis, samples };
   }
 
   function replacementPoints(rows, slot) {
@@ -241,22 +366,51 @@
       medians[pos] = median(players.filter(p => p.pos === pos && p.g >= 3).map(volumeOf).filter(v => v > 0));
     }
 
+    const newsById = opts.newsById || {};
+    const baselines = opts.baselines || {};
+    const nextWeek = (data.meta && data.meta.next_week) || 1;
     const rows = players.map(pl => {
       const outlook = sumOutlook(pl, data, project, scoringTable);
-      const miss = statusMiss(pl);
-      const avail = availability(outlook.games, miss);
-      const ros = {};
-      const nxt = {};
+      const basis = outlook.games;
+      const statusText = (pl.sl_inj && pl.sl_inj.status) || (pl.inj && pl.inj.status) || (pl.inj && pl.inj.practice) || '';
+      const bodyText = (pl.sl_inj && pl.sl_inj.body) || (pl.inj && pl.inj.injury) || '';
+      const timeline = injuryPlan({
+        status: statusText, body: bodyText, lastWeek: pl.last_wk || 0, nextWeek, basis,
+        news: newsById[pl.id] || [],
+      });
+      const modelPpg = {};
+      for (const key of SCORINGS) {
+        modelPpg[key] = outlook.samples ? outlook.raw[key] / basis : num(key === 'std' ? pl.std_pg : pl.ppr_pg);
+      }
+      const hist = baselines[pl.id] || (pl.ids && baselines[pl.ids.sl]) || null;
+      let rate = modelPpg;
+      let usedBase = false;
+      if (hist && (pl.tradeOnly || (timeline.serious && ((pl.g || 0) < 4 || modelPpg.ppr < hist.ppr * 0.85)))) {
+        rate = { ppr: hist.ppr, half: hist.half, std: hist.std };
+        usedBase = true;
+      }
       const age = ages[pl.id] != null ? ages[pl.id] : (pl.ids && ages[pl.ids.sl] != null ? ages[pl.ids.sl] : null);
       const role = roleFactor(pl, medians);
       const team = teamFactor(pl, leaguePts, data.team_off);
       const ageF = ageFactor(pl.pos, age);
-      for (const key of SCORINGS) {
-        ros[key] = outlook.raw[key] * avail;
-        const per = outlook.games ? outlook.raw[key] / outlook.games : num(key === 'std' ? pl.std_pg : pl.ppr_pg);
-        nxt[key] = per * SEASON_WEEKS * role * team * ageF;
+      if (usedBase) {
+        for (const key of SCORINGS) rate[key] *= team;
       }
-      return { pl, miss, games: outlook.games, age, ros, nxt };
+      const playEq = timeline.long ? 0 : gameEq(basis, timeline.miss, timeline.ramp);
+      const ros = {};
+      const nxt = {};
+      const healthy = {};
+      const nxtFull = {};
+      const dyn = timeline.long ? {} : null;
+      for (const key of SCORINGS) {
+        const per = rate[key];
+        healthy[key] = per * basis;
+        ros[key] = per * playEq;
+        nxtFull[key] = per * SEASON_WEEKS * role * ageF * (usedBase ? 1 : team);
+        nxt[key] = nxtFull[key] * (timeline.long ? LONG_DYNASTY : 1);
+        if (dyn) dyn[key] = (DYNASTY_ROS * healthy[key] + DYNASTY_NEXT * nxtFull[key]) * LONG_DYNASTY;
+      }
+      return { pl, timeline, games: basis, age, ros, nxt, healthy, nxtFull, dyn, rate };
     });
 
     const blank = () => ({ qb1: [0, 0], sflex: [0, 0] });
@@ -264,8 +418,14 @@
     const repl = { ppr: { qb1: {}, sflex: {} }, half: { qb1: {}, sflex: {} }, std: { qb1: {}, sflex: {} } };
 
     function measure(row, key, mode, horizon) {
+      if (horizon === 'dynasty' && row.dyn && row.dyn[key] != null) return row.dyn[key];
       if (horizon === 'redraft') return row.ros[key];
       return DYNASTY_ROS * row.ros[key] + DYNASTY_NEXT * row.nxt[key];
+    }
+    function measureHealthy(row, key, mode, horizon) {
+      if (horizon === 'dynasty' && row.dyn && row.dyn[key] != null) return row.dyn[key] / LONG_DYNASTY;
+      if (horizon === 'redraft') return row.healthy[key];
+      return DYNASTY_ROS * row.healthy[key] + DYNASTY_NEXT * row.nxtFull[key];
     }
 
     for (const key of SCORINGS) {
@@ -310,23 +470,43 @@
           par[key][mode] = packP;
         }
       }
+      const pre = {};
+      for (const key of SCORINGS) {
+        pre[key] = {};
+        for (const mode of QB_MODES) {
+          const pack = [];
+          for (const horizon of ['redraft', 'dynasty']) {
+            const hi = horizon === 'redraft' ? 0 : 1;
+            const pts = measureHealthy(row, key, mode, horizon);
+            const line = (repl[key][mode][row.pl.pos] || [0, 0])[hi];
+            pack.push(scaled(pts - line, pts, line, maxPar[key][mode][hi]));
+          }
+          pre[key][mode] = pack;
+        }
+      }
+      const tl = row.timeline;
+      const showInj = tl.serious || tl.miss > 0 || tl.long;
       row.pl.tv = {
         age: row.age,
         g: row.games,
-        miss: row.miss === Infinity ? row.games : row.miss,
-        season: row.miss === Infinity,
+        miss: tl.long ? row.games : tl.miss,
+        season: !!tl.long,
         ros: SCORINGS.map(k => round1(row.ros[k])),
         nxt: SCORINGS.map(k => round1(row.nxt[k])),
-        v, par,
+        base: SCORINGS.map(k => round1(row.rate[k])),
+        pre, v, par,
+        inj: showInj ? { st: tl.label || (tl.long ? 'IR' : 'Injured'), body: tl.detail || null, ret: tl.ret, long: !!tl.long, miss: tl.miss, note: tl.note || '' } : null,
+        starter: !!row.pl.starter,
       };
     }
 
-    const ranked = players.slice().sort((a, b) => (b.tv.v.ppr.qb1[0] - a.tv.v.ppr.qb1[0]) || (b.tv.ros[0] - a.tv.ros[0]));
+    const rankScore = pl => Math.max(pl.tv.v.ppr.qb1[0], pl.tv.v.ppr.qb1[1]);
+    const ranked = players.slice().sort((a, b) => (rankScore(b) - rankScore(a)) || (b.tv.ros[0] - a.tv.ros[0]));
     ranked.forEach((pl, i) => { pl.tv.top = i < TOP_N; });
 
     data.meta = data.meta || {};
     data.meta.trade = {
-      v: 1,
+      v: 2,
       top: TOP_N,
       slots: SLOTS,
       dynasty: [DYNASTY_ROS, DYNASTY_NEXT],
@@ -346,6 +526,16 @@
     const hi = opts && opts.horizon === 'dynasty' ? 1 : 0;
     const base = tv.v[scoring][mode][hi];
     const extra = opts && opts.newsMiss ? opts.newsMiss : 0;
+    if (tv.inj) {
+      const baked = tv.inj.long ? Infinity : (tv.inj.miss || 0);
+      if (!(extra > baked) || tv.inj.long) return base;
+      const basis = tv.g || 1;
+      const now = gameEq(basis, extra, extra >= 2);
+      const was = gameEq(basis, baked, baked >= 2);
+      if (!was) return base;
+      if (hi === 1) return round1(base * (DYNASTY_ROS * (now / was) + DYNASTY_NEXT));
+      return round1(base * now / was);
+    }
     const status = tv.season ? Infinity : (tv.miss || 0);
     const miss = combineMiss(status, extra);
     if (miss === status || !tv.g) return base;
@@ -531,6 +721,22 @@
     const data = ml() && ml().state.data;
     return data && data.players.find(p => p.id === id);
   }
+  function injLabel(pl) {
+    const inj = pl && pl.tv && pl.tv.inj;
+    if (!inj || !inj.st) return '';
+    const bits = [inj.st];
+    if (inj.body) bits.push(inj.body);
+    if (inj.ret) bits.push('back week ' + inj.ret);
+    else if (inj.note) bits.push(inj.note);
+    return bits.join(' · ');
+  }
+  function preValue(pl) {
+    const tv = pl && pl.tv;
+    if (!tv || !tv.pre) return null;
+    const hi = tradeState.horizon === 'dynasty' ? 1 : 0;
+    const pack = tv.pre[tradeState.scoring] && tv.pre[tradeState.scoring][tradeState.qb];
+    return pack ? pack[hi] : null;
+  }
   function liveValue(pl) {
     const data = ml().state.data;
     const pack = data.meta && data.meta.trade && data.meta.trade.max;
@@ -560,10 +766,17 @@
       if (input) { input.disabled = full; input.placeholder = full ? '5 player limit' : 'Add a player'; }
       if (!host) continue;
       host.innerHTML = rows[side].map(row => {
-        const pr = app.project(row.pl, app.state.week, tradeState.scoring);
-        const range = pr.bye ? 'Bye' : `Proj ${f1(pr.pts)} · Floor ${f1(pr.floor)} · Ceiling ${f1(pr.ceil)}`;
-        const disc = row.miss === 'season' ? 'Out for the season' : row.miss >= 1 ? 'Discounted about 1 game' : row.miss >= 0.75 ? 'Discounted as doubtful' : row.miss > 0 ? 'Small injury discount' : '';
-        return `<li class="trade-card"><div><div class="trade-name">${esc(row.name)} <span class="pos ${esc(row.pos)}">${esc(row.pos)}</span> <span class="meta">${esc(row.team)}</span></div><div class="trade-meta"><b class="trade-val">${row.value.toFixed(1)}</b> value · ${range}</div>${disc ? `<div class="trade-disc">${disc}</div>` : ''}</div><button type="button" class="trade-x" data-side="${side}" data-id="${esc(row.id)}" aria-label="Remove ${esc(row.name)} from side ${side.toUpperCase()}">×</button></li>`;
+        let range = 'No weekly projection';
+        if (!row.pl.tradeOnly) {
+          try {
+            const pr = app.project(row.pl, app.state.week, tradeState.scoring);
+            range = pr.bye ? 'Bye this week' : `Proj ${f1(pr.pts)} · Floor ${f1(pr.floor)} · Ceiling ${f1(pr.ceil)}`;
+          } catch (e) { range = 'No weekly projection'; }
+        }
+        const tag = injLabel(row.pl);
+        const pre = preValue(row.pl);
+        const was = pre != null && pre - row.value >= 0.5 ? `<span class="trade-pre">${pre.toFixed(1)} if healthy</span>` : '';
+        return `<li class="trade-card"><div><div class="trade-name">${esc(row.name)} <span class="pos ${esc(row.pos)}">${esc(row.pos)}</span> <span class="meta">${esc(row.team)}</span></div>${tag ? `<div class="trade-inj">${esc(tag)}</div>` : ''}<div class="trade-meta"><b class="trade-val">${row.value.toFixed(1)}</b> value${was ? ' · ' + was : ''} · ${range}</div></div><button type="button" class="trade-x" data-side="${side}" data-id="${esc(row.id)}" aria-label="Remove ${esc(row.name)} from side ${side.toUpperCase()}">×</button></li>`;
       }).join('') || '<li class="trade-empty">No players yet.</li>';
       host.querySelectorAll('.trade-x').forEach(btn => btn.addEventListener('click', () => {
         tradeState[btn.dataset.side] = tradeState[btn.dataset.side].filter(id => id !== btn.dataset.id);
@@ -595,7 +808,13 @@
     const close = () => { list.hidden = true; input.setAttribute('aria-expanded', 'false'); active = -1; };
     const paint = () => {
       const esc = ml().esc;
-      list.innerHTML = items.length ? items.map((p, i) => `<li role="option" data-id="${esc(p.id)}" aria-selected="${i === active}"><span class="pos ${esc(p.pos)}">${esc(p.pos)}</span> ${esc(p.name)} <span class="meta">${esc(p.team)} · ${liveValue(p).toFixed(1)}</span></li>`).join('') : `<li class="empty">${tradeState.all ? 'No players match.' : 'No top-150 match. Search all players for a lower fallback value.'}</li>`;
+      list.innerHTML = items.length ? items.map((p, i) => {
+        const tag = injLabel(p);
+        const pre = preValue(p);
+        const now = liveValue(p);
+        const was = pre != null && pre - now >= 0.5 ? ` · ${pre.toFixed(1)} if healthy` : '';
+        return `<li role="option" data-id="${esc(p.id)}" aria-selected="${i === active}"><span class="pos ${esc(p.pos)}">${esc(p.pos)}</span> ${esc(p.name)} <span class="meta">${esc(p.team)} · ${now.toFixed(1)}${was}${tag ? ' · ' + esc(tag) : ''}</span></li>`;
+      }).join('') : `<li class="empty">${tradeState.all ? 'No players match.' : 'No top-150 or starter match. Search all players for a lower fallback value.'}</li>`;
       list.hidden = false;
       input.setAttribute('aria-expanded', 'true');
       list.querySelectorAll('li[data-id]').forEach(li => li.addEventListener('mousedown', e => { e.preventDefault(); addPlayer(side, li.dataset.id); input.value = ''; close(); }));
@@ -604,7 +823,7 @@
       const q = norm(input.value.trim());
       if (q.length < 2) { close(); return; }
       const toks = q.split(/\s+/);
-      const pool = ml().state.data.players.filter(p => p.tv && (tradeState.all || p.tv.top));
+      const pool = ml().state.data.players.filter(p => p.tv && (tradeState.all || p.tv.top || p.tv.starter));
       items = pool.filter(p => toks.every(t => norm(p.name).includes(t))).sort((a, b) => liveValue(b) - liveValue(a)).slice(0, 8);
       active = items.length ? 0 : -1;
       paint();
@@ -652,6 +871,7 @@
   return {
     SCORINGS, QB_MODES, SLOTS, DYNASTY_ROS, DYNASTY_NEXT, CONSOLIDATION, CONSOLIDATION_CAP, TOP_N, FALLBACK_CAP, AGE_CURVE, PREF,
     missFromText, statusMiss, newsMiss, combineMiss, availability, ageFactor, roleFactor, teamFactor, pointsOf,
+    gamesBasis, gameEq, parseNews, injuryPlan, sumOutlook, IR_MIN, LONG_DYNASTY,
     ageFromBirth, spearman, adjustSide, gradeGap, analyze, valueOf, attachTrade, backtest, round1,
     ensure, init, render: renderTrade,
   };
