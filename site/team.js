@@ -451,7 +451,7 @@
     const rows = ra.filter(r => keep.test(r[0])).map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${rb[r[0]] ?? '<span class="na">—</span>'}</td></tr>`).join('');
     return `<details class="mv-cmp"><summary>Side-by-side</summary><table class="cmp-table sm"><thead><tr><th></th><th>${ML.esc(a.name)}</th><th>${ML.esc(b.name)}</th></tr></thead><tbody>${rows}</tbody></table></details>`;
   }
-  function rangeCell(p) { return p && p.status === 'ok' ? `<span class="range">${ML.f1(p.pr.floor)} – ${ML.f1(p.pr.ceil)}</span>` : ''; }
+  function rangeCell(p) { return p && p.status === 'ok' ? `<span class="range"><span class="fl">${ML.f1(p.pr.floor)}</span><span class="rg-sep">–</span><span class="cl">${ML.f1(p.pr.ceil)}</span></span>` : ''; }
 
   function renderResults() {
     const L = T.league; const A = analyze(L, T.teamId);
