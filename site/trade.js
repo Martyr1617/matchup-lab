@@ -60,6 +60,9 @@
 
    Every team's starting quarterback, top running back, top receivers, and
    starting tight end stay searchable even when they are outside the top 250.
+   So do QB2, the top three running backs, the top five receivers, the top
+   two tight ends, and anyone with a meaningful recent season. Players
+   added only for that list do not move the replacement line.
 
    Consolidation: each extra player on the deeper side discounts that
    side by 4% of its total, capped at 12%. A 2-for-1 is a 4% depth
@@ -223,33 +226,47 @@
     for (const key of SCORINGS) {
       for (const mode of QB_MODES) {
         for (let hi = 0; hi < 2; hi++) {
-          const rows = (players || []).filter(p => p && p.tv && p.tv.v && p.tv.par && p.tv.v[key][mode][hi] > 0 && p.tv.v[key][mode][hi] < 1);
-          rows.sort((a, b) => {
-            const dp = b.tv.par[key][mode][hi] - a.tv.par[key][mode][hi];
-            if (dp) return dp;
-            const ros = b.tv.ros[rosIndex[key]] - a.tv.ros[rosIndex[key]];
-            if (ros) return ros;
-            return String(a.id).localeCompare(String(b.id));
-          });
-          let prevV = null;
-          let prevPar = null;
-          let prevRos = null;
-          for (const p of rows) {
-            const par = p.tv.par[key][mode][hi];
-            const ros = p.tv.ros[rosIndex[key]];
-            let v = p.tv.v[key][mode][hi];
-            const worse = prevV != null && (par < prevPar - 1e-9 || (Math.abs(par - prevPar) < 1e-9 && ros < prevRos - 1e-9));
-            if (worse && v >= prevV) {
-              const step = prevV >= 0.1 ? 0.001 : 0.0001;
-              let nv = round4(prevV - step);
-              if (!(nv > 0) || nv >= prevV) nv = round4(prevV * 0.5);
-              if (!(nv > 0)) nv = 0.0001;
-              v = nv;
-              p.tv.v[key][mode][hi] = v;
+          for (const pos of ['QB', 'RB', 'WR', 'TE']) {
+            const rows = (players || []).filter(p => p && p.pos === pos && p.tv && p.tv.v && p.tv.par && p.tv.v[key][mode][hi] > 0 && p.tv.v[key][mode][hi] < 1);
+            rows.sort((a, b) => {
+              const dp = b.tv.par[key][mode][hi] - a.tv.par[key][mode][hi];
+              if (dp) return dp;
+              const ros = b.tv.ros[rosIndex[key]] - a.tv.ros[rosIndex[key]];
+              if (ros) return ros;
+              return String(a.id).localeCompare(String(b.id));
+            });
+            let groupPar = null;
+            let groupRos = null;
+            let groupFloor = null;
+            let betterPar = null;
+            let betterFloor = null;
+            for (const p of rows) {
+              const par = p.tv.par[key][mode][hi];
+              const ros = p.tv.ros[rosIndex[key]];
+              let v = p.tv.v[key][mode][hi];
+              if (groupPar != null && par < groupPar - 1e-9) {
+                betterFloor = groupFloor;
+                betterPar = groupPar;
+              }
+              const ceiling = betterFloor != null && par < betterPar - 1e-9 ? betterFloor
+                : (groupPar != null && Math.abs(par - groupPar) < 1e-9 && ros < groupRos - 1e-9 ? groupFloor : null);
+              if (ceiling != null && v >= ceiling && !(p.adp && p.tv.inj)) {
+                const step = ceiling >= 0.1 ? 0.001 : 0.0001;
+                let nv = round4(ceiling - step);
+                if (!(nv > 0) || nv >= ceiling) nv = round4(ceiling * 0.5);
+                if (!(nv > 0)) nv = 0.0001;
+                v = nv;
+                p.tv.v[key][mode][hi] = v;
+              }
+              if (groupPar == null || par < groupPar - 1e-9) {
+                groupPar = par;
+                groupRos = ros;
+                groupFloor = v;
+              } else if (ros < groupRos - 1e-9) {
+                groupRos = ros;
+                groupFloor = v;
+              } else if (groupFloor == null || v < groupFloor) groupFloor = v;
             }
-            prevV = v;
-            prevPar = par;
-            prevRos = ros;
           }
         }
       }
@@ -670,14 +687,20 @@
       for (const mode of QB_MODES) {
         for (const horizon of ['redraft', 'dynasty']) {
           const byPos = {};
-          for (const row of rows) (byPos[row.pl.pos] = byPos[row.pl.pos] || []).push({ pts: measureHealthy(row, key, mode, horizon), row });
+          for (const row of rows) {
+            if (row.pl.added) continue;
+            (byPos[row.pl.pos] = byPos[row.pl.pos] || []).push({ pts: measureHealthy(row, key, mode, horizon), row });
+          }
           const hi = horizon === 'redraft' ? 0 : 1;
           for (const pos of Object.keys(SLOTS[mode])) {
             repl[key][mode][pos] = repl[key][mode][pos] || [0, 0];
             repl[key][mode][pos][hi] = round1(replacementPoints(byPos[pos] || [], SLOTS[mode][pos]));
           }
           let max = 0;
-          for (const row of rows) max = Math.max(max, curve(surplusOf(row, key, mode, horizon)));
+          for (const row of rows) {
+            if (row.pl.added) continue;
+            max = Math.max(max, curve(surplusOf(row, key, mode, horizon)));
+          }
           maxPar[key][mode][hi] = max;
         }
       }
@@ -731,6 +754,7 @@
         share: Math.round(row.share * 10000) / 10000,
         week: nextWeek,
         starter: !!row.pl.starter,
+        keep: !!row.pl.keep,
       };
     }
 
@@ -749,7 +773,7 @@
       }
     }
     data.meta.trade = {
-      v: 6,
+      v: 7,
       playoff: PLAYOFF_WEIGHT,
       ramp: RETURN_RAMP,
       top: TOP_N,
@@ -1301,7 +1325,7 @@
         const now = liveValue(p);
         const was = pre != null && pre - now >= 0.5 ? ` · ${valueText(pre)} if healthy` : '';
         return `<li role="option" data-id="${esc(p.id)}" aria-selected="${i === active}"><span class="pos ${esc(p.pos)}">${esc(p.pos)}</span> ${esc(p.name)} <span class="meta">${esc(p.team)} · ${valueText(now)}${was}${tag ? ' · ' + esc(tag) : ''}</span></li>`;
-      }).join('') : `<li class="empty">${tradeState.all ? 'No players match.' : 'No top-' + TOP_N + ' or starter match. Search all players for a lower fallback value.'}</li>`;
+      }).join('') : `<li class="empty">${tradeState.all ? 'No players match.' : 'No top-' + TOP_N + ', depth-chart, or recent-producer match. Search all players for a lower fallback value.'}</li>`;
       list.hidden = false;
       input.setAttribute('aria-expanded', 'true');
       list.querySelectorAll('li[data-id]').forEach(li => li.addEventListener('mousedown', e => { e.preventDefault(); addPlayer(side, li.dataset.id); input.value = ''; close(); }));
@@ -1310,7 +1334,7 @@
       const q = norm(input.value.trim());
       if (q.length < 2) { close(); return; }
       const toks = q.split(/\s+/);
-      const pool = ml().state.data.players.filter(p => p.tv && (tradeState.all || p.tv.top || p.tv.starter));
+      const pool = ml().state.data.players.filter(p => p.tv && (tradeState.all || p.tv.top || p.tv.starter || p.tv.keep));
       items = pool.filter(p => toks.every(t => norm(p.name).includes(t))).sort((a, b) => liveValue(b) - liveValue(a)).slice(0, 8);
       active = items.length ? 0 : -1;
       paint();

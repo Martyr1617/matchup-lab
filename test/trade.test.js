@@ -113,7 +113,7 @@ test('published values sit on a 0–100 scale with scarcity and injury', () => {
   }
   const best = Math.max(...skill.map(p => p.tv.v.ppr.qb1[0]));
   assert.equal(best, 100);
-  assert.equal(data.meta.trade.v, 6);
+  assert.equal(data.meta.trade.v, 7);
   assert.equal(data.meta.trade.playoff, 1.5);
   assert.equal(data.meta.trade.slots.qb1.QB, 20);
   assert.equal(data.meta.trade.slots.sflex.QB, 32);
@@ -264,15 +264,17 @@ test('the deep tail of the top 250 stays ordered and off zero', () => {
   const top = data.players.filter(p => p.tv && p.tv.top);
   assert.equal(top.length, 250);
   assert.ok(top.every(p => p.tv.v.ppr.qb1[0] > 0 && p.tv.v.ppr.qb1[1] > 0));
-  const rows = top.filter(p => !(p.adp && p.tv.inj)).sort((a, b) => b.tv.par.ppr.qb1[0] - a.tv.par.ppr.qb1[0] || b.tv.ros[0] - a.tv.ros[0]);
-  for (let i = 1; i < rows.length; i++) {
-    const parBetter = rows[i - 1].tv.par.ppr.qb1[0] > rows[i].tv.par.ppr.qb1[0];
-    const rosBetter = rows[i - 1].tv.ros[0] > rows[i].tv.ros[0];
-    if (!parBetter && !rosBetter) continue;
-    const av = rows[i - 1].tv.v.ppr.qb1[0];
-    const bv = rows[i].tv.v.ppr.qb1[0];
-    const tail = av < 1 && bv < 1;
-    assert.ok(tail ? av > bv : av >= bv, rows[i - 1].name + ' ' + av + ' vs ' + rows[i].name + ' ' + bv);
+  for (const pos of ['QB', 'RB', 'WR', 'TE']) {
+    const rows = top.filter(p => p.pos === pos && !(p.adp && p.tv.inj)).sort((a, b) => b.tv.par.ppr.qb1[0] - a.tv.par.ppr.qb1[0] || b.tv.ros[0] - a.tv.ros[0]);
+    for (let i = 1; i < rows.length; i++) {
+      const parBetter = rows[i - 1].tv.par.ppr.qb1[0] > rows[i].tv.par.ppr.qb1[0];
+      const rosBetter = rows[i - 1].tv.ros[0] > rows[i].tv.ros[0];
+      if (!parBetter && !rosBetter) continue;
+      const av = rows[i - 1].tv.v.ppr.qb1[0];
+      const bv = rows[i].tv.v.ppr.qb1[0];
+      const tail = av < 1 && bv < 1;
+      assert.ok(tail ? av > bv : av >= bv, pos + ' ' + rows[i - 1].name + ' ' + av + ' vs ' + rows[i].name + ' ' + bv);
+    }
   }
   const bottom = top.slice().sort((a, b) => a.tv.v.ppr.qb1[0] - b.tv.v.ppr.qb1[0]).slice(0, 40);
   const uniq = new Set(bottom.map(p => p.tv.v.ppr.qb1[0]));
@@ -330,6 +332,59 @@ test('an older trade file widens to the top 250 without rebuilding', () => {
   assert.equal(copy.players.filter(p => p.tv && p.tv.top).length, 250);
   assert.equal(copy.players.find(p => p.name === 'Puka Nacua').tv.v.ppr.qb1[0], before);
   assert.equal(trade.ensure(copy), copy);
+});
+
+test('Zach Charbonnet is searchable from a healthy baseline', () => {
+  const p = data.players.find(pl => pl.name === 'Zach Charbonnet');
+  assert.ok(p, 'Zach Charbonnet is in the trade file');
+  assert.equal(p.pos, 'RB');
+  assert.equal(p.team, 'SEA');
+  assert.equal(String(p.id).trim(), '00-0039165');
+  assert.ok(p.tv && (p.tv.keep || p.tv.top || p.tv.starter));
+  assert.match((p.tv.inj.st || '') + ' ' + (p.tv.inj.body || ''), /PUP|ACL/i);
+  assert.match(p.tv.inj.body || '', /ACL/);
+  assert.ok(p.tv.base[0] >= 8, 'baseline ' + p.tv.base[0]);
+  assert.ok(p.tv.v.ppr.qb1[0] > 0 && p.tv.v.ppr.qb1[0] < p.tv.pre.ppr.qb1[0], 'redraft ' + p.tv.v.ppr.qb1[0]);
+  assert.ok(p.tv.v.ppr.qb1[1] > 5, 'dynasty ' + p.tv.v.ppr.qb1[1]);
+  assert.ok(p.tv.v.ppr.qb1[1] > p.tv.v.ppr.qb1[0]);
+  const src = fs.readFileSync(path.join(__dirname, '..', 'build_trade.js'), 'utf8');
+  assert.match(src, /resolveGsis/);
+  assert.match(src, /DEPTH_N/);
+  const tradeSrc = fs.readFileSync(path.join(site, 'trade.js'), 'utf8');
+  assert.match(tradeSrc, /tv\.keep/);
+});
+
+test('depth-chart and recent producers stay searchable below the cutoff', () => {
+  const listed = data.players.filter(p => p.tv && p.tv.keep);
+  assert.ok(listed.length >= 80, 'listed ' + listed.length);
+  assert.ok(listed.every(p => p.tv.v.ppr.qb1[0] > 0 || p.tv.v.ppr.qb1[1] > 0));
+  const below = listed.filter(p => !p.tv.top);
+  assert.ok(below.length >= 20, 'below cutoff ' + below.length);
+  assert.ok(below.every(p => p.tv.v.ppr.qb1[0] > 0 || p.tv.v.ppr.qb1[1] > 0));
+  const sleeperPath = path.join(__dirname, '..', 'data', 'sleeper_players.json');
+  if (!fs.existsSync(sleeperPath)) return;
+  const sl = JSON.parse(fs.readFileSync(sleeperPath, 'utf8'));
+  const bySl = new Map(data.players.filter(p => p.ids && p.ids.sl).map(p => [String(p.ids.sl), p]));
+  const DEPTH = { QB: 2, RB: 3, WR: 5, TE: 2 };
+  const buckets = {};
+  for (const [sid, sp] of Object.entries(sl)) {
+    if (!sp || !/^(QB|RB|WR|TE)$/.test(sp.position) || !/^[A-Z]{2,3}$/.test(sp.team || '')) continue;
+    const raw = sp.depth_chart_position || sp.position;
+    const pos = raw === 'LWR' || raw === 'RWR' || raw === 'SWR' ? 'WR' : raw;
+    if (!DEPTH[pos]) continue;
+    const key = sp.team + '|' + pos;
+    (buckets[key] = buckets[key] || []).push({ sid, order: sp.depth_chart_order || 99, rank: sp.search_rank == null ? 9999 : sp.search_rank, name: sp.full_name });
+  }
+  const missing = [];
+  for (const [key, rows] of Object.entries(buckets)) {
+    const pos = key.split('|')[1];
+    rows.sort((a, b) => a.order - b.order || a.rank - b.rank);
+    for (const row of rows.slice(0, DEPTH[pos])) {
+      const pl = bySl.get(row.sid);
+      if (!pl || !pl.tv || !(pl.tv.top || pl.tv.starter || pl.tv.keep)) missing.push(row.name + ' ' + key);
+    }
+  }
+  assert.deepEqual(missing, []);
 });
 
 test('starters and injured stars stay searchable', () => {

@@ -38,7 +38,7 @@ function loadSleeper() {
 
 function loadBaselines(season) {
   const py = `
-import json, os
+import json, os, re, unicodedata
 try:
     import pandas as pd
 except Exception:
@@ -46,12 +46,21 @@ except Exception:
     raise SystemExit
 root = ${JSON.stringify(path.join(__dirname, 'data'))}
 season = ${Number(season) || 2026}
+def fold(text):
+    s = unicodedata.normalize('NFD', str(text or '')).lower()
+    s = ''.join(c for c in s if unicodedata.category(c) != 'Mn')
+    s = re.sub("[.'’" + chr(96) + "-]", ' ', s)
+    s = re.sub(r'\\b(jr|sr|ii|iii|iv|v)\\b', ' ', s)
+    s = re.sub(r'[^a-z0-9 ]', ' ', s)
+    s = re.sub(r'\\s+', ' ', s).strip()
+    s = re.sub(r'\\b([a-z]) (?=[a-z]\\b)', r'\\1', s)
+    return s
 frames = []
 for name in ('player_stats.csv', 'players_2025.csv'):
     path = os.path.join(root, name)
     if os.path.exists(path) and os.path.getsize(path) > 0:
         frames.append(pd.read_csv(path, usecols=lambda c: c in {
-            'player_id','season','season_type','week','fantasy_points','fantasy_points_ppr','receptions'
+            'player_id','player_display_name','position','season','season_type','week','fantasy_points','fantasy_points_ppr','receptions'
         }))
 if not frames:
     print('{}')
@@ -61,7 +70,16 @@ df = df[df.season_type.fillna('REG').astype(str).str.upper().str.startswith('REG
 df = df[df.season < season]
 df = df[df.player_id.notna()]
 out = {}
+name_ids = {}
 for pid, d in df.groupby('player_id'):
+    pid = str(pid).strip()
+    named = d[d.player_display_name.notna()] if 'player_display_name' in d.columns else d.iloc[0:0]
+    if len(named):
+        last = named.sort_values('season').iloc[-1]
+        pos = str(last.position) if 'position' in last and pd.notna(last.position) else ''
+        key = fold(last.player_display_name) + '|' + pos
+        if key.strip('|'):
+            name_ids.setdefault(key, set()).add(pid)
     seasons = []
     for yr, g in d.groupby('season'):
         n = int(g.week.nunique()) if 'week' in g else len(g)
@@ -92,21 +110,22 @@ for pid, d in df.groupby('player_id'):
         ppr, half, std = round(career[0], 2), round(career[1], 2), round(career[2], 2)
         year = int(seasons[-1][0])
     if max(ppr, half, std) <= 0: continue
-    out[str(pid).strip()] = {'ppr': ppr, 'half': half, 'std': std, 'year': year}
+    out[pid] = {'ppr': ppr, 'half': half, 'std': std, 'year': year}
+names = {k: next(iter(v)) for k, v in name_ids.items() if len(v) == 1}
 recent = {}
 week_path = os.path.join(root, 'players_2026.csv')
 if os.path.exists(week_path):
     wk = pd.read_csv(week_path, usecols=['player_id', 'week'])
     for pid, g in wk.groupby('player_id'):
         recent[str(pid).strip()] = {'last': int(g.week.max()), 'g': int(g.week.nunique())}
-print(json.dumps({'rates': out, 'recent': recent}))
+print(json.dumps({'rates': out, 'recent': recent, 'names': names}))
 `;
   try {
     const raw = execFileSync('python3', ['-c', py], { maxBuffer: 64 * 1024 * 1024, encoding: 'utf8' });
     const parsed = JSON.parse(raw.slice(raw.indexOf('{')));
     const rates = parsed.rates || parsed;
-    console.log('baselines', Object.keys(rates).length, 'recent', Object.keys(parsed.recent || {}).length);
-    return { rates, recent: parsed.recent || {} };
+    console.log('baselines', Object.keys(rates).length, 'recent', Object.keys(parsed.recent || {}).length, 'names', Object.keys(parsed.names || {}).length);
+    return { rates, recent: parsed.recent || {}, names: parsed.names || {} };
   } catch (e) {
     console.log('WARN baselines unavailable', e.message.split('\n')[0]);
     return {};
@@ -179,21 +198,79 @@ function findPlayer(players, sid, gsis, name) {
   return players.find(p => (p.ids && p.ids.sl === sid) || (gsis && p.id === gsis) || (name && p.name === name));
 }
 
-function addMissing(data, sl, baselines, recent) {
+// Depth-chart spots that stay searchable even when the player has no 2026
+// weeks. WR counts LWR/RWR/SWR together.
+const DEPTH_N = { QB: 2, RB: 3, WR: 5, TE: 2 };
+// Best PPR per game over the last three seasons, eight games or more.
+const PROD_PPR = { QB: 12, RB: 8, WR: 8, TE: 6 };
+
+function chartPos(sp) {
+  const raw = (sp && (sp.depth_chart_position || sp.position)) || '';
+  if (raw === 'LWR' || raw === 'RWR' || raw === 'SWR') return 'WR';
+  if (raw === 'QB' || raw === 'RB' || raw === 'WR' || raw === 'TE') return raw;
+  return '';
+}
+
+function playerName(sp) {
+  return (sp && (sp.full_name || ((sp.first_name || '') + ' ' + (sp.last_name || '')).trim())) || '';
+}
+
+// Sleeper leaves gsis_id blank for some active players (Zach Charbonnet).
+// Fall back to an unambiguous name and position from the stats file.
+function resolveGsis(sp, names) {
+  const gs = gsisOf(sp);
+  if (gs) return gs;
+  const key = foldName(playerName(sp)) + '|' + (sp && sp.position || '');
+  return (names && names[key]) || '';
+}
+
+function produced(base, pos, season) {
+  return !!(base && base.year >= season - 3 && base.ppr >= (PROD_PPR[pos] || 99));
+}
+
+function depthIds(sl) {
+  const buckets = {};
+  for (const [sid, sp] of Object.entries(sl || {})) {
+    if (!sp || !/^(QB|RB|WR|TE)$/.test(sp.position)) continue;
+    const team = normTeam(sp.team);
+    if (!/^[A-Z]{2,3}$/.test(team)) continue;
+    const pos = chartPos(sp);
+    if (!DEPTH_N[pos]) continue;
+    const key = team + '|' + pos;
+    (buckets[key] = buckets[key] || []).push({
+      sid,
+      order: sp.depth_chart_order || 99,
+      rank: sp.search_rank == null ? 9999 : sp.search_rank,
+    });
+  }
+  const ids = new Set();
+  for (const [key, rows] of Object.entries(buckets)) {
+    const pos = key.split('|')[1];
+    rows.sort((a, b) => a.order - b.order || a.rank - b.rank);
+    for (const row of rows.slice(0, DEPTH_N[pos])) ids.add(row.sid);
+  }
+  return ids;
+}
+
+function addMissing(data, sl, baselines, recent, names) {
   const players = data.players;
+  const season = (data.meta && data.meta.season) || 2026;
+  const band = depthIds(sl);
   const haveSl = new Set(players.map(p => p.ids && p.ids.sl).filter(Boolean));
-  const haveId = new Set(players.map(p => p.id));
+  const haveId = new Set(players.map(p => String(p.id || '').trim()));
+  const haveName = new Set(players.map(p => foldName(p.name) + '|' + p.pos + '|' + p.team));
   let added = 0;
   for (const [sid, sp] of Object.entries(sl)) {
     const pos = sp.position;
     if (!/^(QB|RB|WR|TE)$/.test(pos)) continue;
     const team = normTeam(sp.team);
     if (!/^[A-Z]{2,3}$/.test(team)) continue;
-    const gs = gsisOf(sp);
-    if (haveSl.has(sid) || (gs && haveId.has(gs))) continue;
+    const resolved = resolveGsis(sp, names);
+    const name = playerName(sp);
+    if (haveSl.has(sid) || (resolved && haveId.has(resolved)) || (name && haveName.has(foldName(name) + '|' + pos + '|' + team))) continue;
     const rank = sp.search_rank == null ? 9999 : sp.search_rank;
-    const base = (gs && baselines[gs]) || null;
-    const fresh = !!(base && base.year >= ((data.meta && data.meta.season) || 2026) - 3);
+    const base = (resolved && baselines[resolved]) || null;
+    const fresh = !!(base && base.year >= season - 3);
     const inj = sp.injury_status || '';
     const body = sp.injury_body_part || '';
     const hurt = severity(inj) >= 2 || /acl|achilles/i.test(body);
@@ -201,25 +278,51 @@ function addMissing(data, sl, baselines, recent) {
     const depthPos = sp.depth_chart_position;
     const depth = sp.depth_chart_order;
     const starterSlot = depth === 1 && (depthPos === 'QB' || depthPos === 'RB' || depthPos === 'TE' || depthPos === 'LWR' || depthPos === 'RWR' || depthPos === 'SWR');
-    if (!notable && !(starterSlot && (fresh || rank <= 200))) continue;
-    const name = sp.full_name || ((sp.first_name || '') + ' ' + (sp.last_name || '')).trim();
+    const onChart = band.has(sid);
+    const recentProd = produced(base, pos, season);
+    if (!notable && !(starterSlot && (fresh || rank <= 200)) && !onChart && !recentProd) continue;
     if (!name) continue;
-    const id = gs || ('sl-' + sid);
+    const id = resolved || ('sl-' + sid);
     players.push({
       id, name, pos, team,
-      g: 0, last_wk: (recent[gs] && recent[gs].last) || 0,
+      g: 0, last_wk: (recent[resolved] && recent[resolved].last) || 0,
       ppr_pg: base ? base.ppr : 0,
       std_pg: base ? base.std : 0,
       tradeOnly: true,
+      added: true,
+      keep: true,
       ids: { sl: sid, espn: sp.espn_id != null ? String(sp.espn_id) : null, yahoo: sp.yahoo_id != null ? String(sp.yahoo_id) : null },
       sl_inj: inj ? { status: inj, body: body || null } : (body ? { status: /acl|achilles/i.test(body) ? 'IR' : '', body } : null),
       w: {}, t: {}, log: [],
     });
     haveSl.add(sid);
     haveId.add(id);
+    haveName.add(foldName(name) + '|' + pos + '|' + team);
     added += 1;
   }
   console.log('added missing', added);
+  return added;
+}
+
+function markListed(data, sl, baselines, names) {
+  const band = depthIds(sl);
+  const season = (data.meta && data.meta.season) || 2026;
+  const sidByGsis = {};
+  for (const [sid, sp] of Object.entries(sl || {})) {
+    const id = resolveGsis(sp, names);
+    if (id && !sidByGsis[id]) sidByGsis[id] = sid;
+  }
+  let n = 0;
+  for (const pl of data.players || []) {
+    const sid = (pl.ids && pl.ids.sl) || sidByGsis[String(pl.id || '').trim()];
+    const base = baselines[String(pl.id || '').trim()] || (sid && baselines[sid]) || null;
+    if (pl.keep || (sid && band.has(sid)) || produced(base, pl.pos, season)) {
+      pl.keep = true;
+      n += 1;
+    }
+  }
+  console.log('listed', n);
+  return n;
 }
 
 function markStarters(data, sl) {
@@ -323,14 +426,18 @@ function main() {
   const loaded = loadBaselines(season);
   const baselines = loaded.rates || loaded;
   const recent = loaded.recent || {};
+  const names = loaded.names || {};
   for (const [sid, sp] of Object.entries(sl)) {
-    const base = baselines[gsisOf(sp)];
+    const id = resolveGsis(sp, names);
+    const base = id && baselines[id];
     if (base) baselines[sid] = base;
+    if (id && ages[sid] != null && ages[id] == null) ages[id] = ages[sid];
   }
   overlayInjuries(data, sl);
-  addMissing(data, sl, baselines, recent);
+  addMissing(data, sl, baselines, recent, names);
   applyAdp(data);
   markStarters(data, sl);
+  markListed(data, sl, baselines, names);
   const newsById = loadNewsById(data.players);
   const t0 = Date.now();
   attachTrade(data, { project, scoring: SCORING, ages, baselines, newsById });
