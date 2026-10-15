@@ -1,7 +1,7 @@
 /* App shell is stamped so a deploy swaps in a new cache. Projection files stay
    network-first in their own cache, so an update does not discard the last good
-   data.json or market.json when the network is down. */
-const VER = 'a73d5cf7a7';
+   data.json, market.json, or news.json when the network is down. */
+const VER = '27aae587f7';
 const SHELL_CACHE = 'ml-shell-' + VER;
 const DATA_CACHE = 'ml-data';
 const VERSIONED = ['styles.css', 'app.js', 'model.js', 'lineup.js', 'team.js', 'glossary.js', 'chart.umd.min.js'];
@@ -27,7 +27,7 @@ self.addEventListener('activate', event => {
 });
 
 function isProjectionData(url) {
-  return /\/(?:data|market)\.json$/.test(url.pathname);
+  return /\/(?:data|market|news)\.json$/.test(url.pathname);
 }
 
 async function networkFirstData(request) {

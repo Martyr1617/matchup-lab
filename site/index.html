@@ -17,7 +17,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="Matchup Lab" />
 <meta name="theme-color" content="#0b3d24" />
-<link rel="stylesheet" href="styles.css?v=a73d5cf7a7" />
+<link rel="stylesheet" href="styles.css?v=27aae587f7" />
 </head>
 <body>
 <div class="app">
@@ -59,6 +59,7 @@
     <button class="tab" data-view="player" type="button" id="playerTab" disabled>Player</button>
     <button class="tab" data-view="compare" type="button">Compare</button>
     <button class="tab" data-view="defense" type="button">Defenses</button>
+    <button class="tab" data-view="news" type="button">News</button>
     <button class="tab" data-view="method" type="button">How it works</button>
   </nav>
 
@@ -126,6 +127,25 @@
           <tbody id="defBody"></tbody>
         </table>
       </div>
+    </section>
+
+    <!-- NEWS -->
+    <section class="view" id="view-news" hidden>
+      <div class="view-head">
+        <div>
+          <h1 class="page-title">Latest news</h1>
+          <p class="sub" id="newsSub">Headlines matched to players and teams. Each one links out to the source.</p>
+        </div>
+        <div class="board-filters">
+          <div class="segmented" id="newsSeg" role="radiogroup" aria-label="News filter">
+            <button type="button" role="radio" data-val="all" aria-checked="true">All</button>
+            <button type="button" role="radio" data-val="injury" aria-checked="false">Injuries</button>
+            <button type="button" role="radio" data-val="roster" aria-checked="false">My roster</button>
+          </div>
+        </div>
+      </div>
+      <div id="newsStatus" class="notice" hidden></div>
+      <div id="newsList" class="news-list"></div>
     </section>
 
     <!-- METHOD -->
@@ -209,13 +229,13 @@
   </main>
 </div>
 
-<script>window.ML_VER="a73d5cf7a7";</script>
-<script src="chart.umd.min.js?v=a73d5cf7a7"></script>
-<script src="lineup.js?v=a73d5cf7a7"></script>
-<script src="team.js?v=a73d5cf7a7"></script>
-<script src="glossary.js?v=a73d5cf7a7"></script>
-<script src="model.js?v=a73d5cf7a7"></script>
-<script src="app.js?v=a73d5cf7a7"></script>
+<script>window.ML_VER="27aae587f7";</script>
+<script src="chart.umd.min.js?v=27aae587f7"></script>
+<script src="lineup.js?v=27aae587f7"></script>
+<script src="team.js?v=27aae587f7"></script>
+<script src="glossary.js?v=27aae587f7"></script>
+<script src="model.js?v=27aae587f7"></script>
+<script src="app.js?v=27aae587f7"></script>
 <script>
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
 </script>
