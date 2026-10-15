@@ -972,8 +972,9 @@
     if (v === 'team' && window.MLTeam) window.MLTeam.render();
     if (v === 'compare') renderCompare();
     if (v === 'news') renderNews();
+    if (v === 'trade' && window.MLTrade) window.MLTrade.render();
   }
-  function rerender() { if (state.view === 'board') renderBoard(); else if (state.view === 'player' && state.player) renderPlayer(state.player); else if (state.view === 'team' && window.MLTeam) window.MLTeam.render(); else if (state.view === 'compare') renderCompare(); else if (state.view === 'news') renderNews(); }
+  function rerender() { if (state.view === 'board') renderBoard(); else if (state.view === 'player' && state.player) renderPlayer(state.player); else if (state.view === 'team' && window.MLTeam) window.MLTeam.render(); else if (state.view === 'compare') renderCompare(); else if (state.view === 'news') renderNews(); else if (state.view === 'trade' && window.MLTrade) window.MLTrade.render(); }
 
   function initControls() {
     const sel = $('#weekSelect');
@@ -1082,10 +1083,12 @@
     try { state.market = await getM(REMOTE + 'market.json?t=' + Math.floor(Date.now() / 6e5)); } catch (e) { try { state.market = await getM('market.json?v=' + (window.ML_VER || Date.now())); } catch (e2) { state.market = null; } }
     try { state.news = await getM(REMOTE + 'news.json?t=' + Math.floor(Date.now() / 6e5)); } catch (e) { try { state.news = await getM('news.json?v=' + (window.ML_VER || Date.now())); } catch (e2) { state.news = null; } }
     indexNews();
+    if (window.MLTrade) window.MLTrade.ensure(state.data);
     const safe = (fn, name) => { try { fn(); } catch (e) { console.error(name, e); } };
     safe(initControls, 'controls'); safe(initSearch, 'search'); safe(renderBoard, 'board'); loadLiveInjuries();
     window.ML = { state, SCORING, weatherChip, weatherText, loadWeather, injuryOf, isOut, project, makeDist, gameFor, f1, f2, pct, esc, avatar, statusFlag, newsBadge, hasInjuryNews, openPlayer, rkOrd, fmtKick, tn, setView, compareRows, compareTable, renderNews, renderBoard };
     if (window.MLTeam) window.MLTeam.init();
+    if (window.MLTrade) window.MLTrade.init();
   }
   boot();
 })();
