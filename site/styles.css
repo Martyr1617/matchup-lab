@@ -625,6 +625,7 @@ tr.has-news-inj { background: color-mix(in oklab, var(--color-bad) 16%, var(--co
 .trade-name { font-weight: 700; line-height: 1.3; }
 .trade-meta { color: var(--color-text-muted); font-size: var(--text-sm); margin-top: 2px; }
 .trade-val { color: var(--color-gold); font-variant-numeric: tabular-nums; }
+.trade-adp { font-variant-numeric: tabular-nums; }
 .trade-disc, .trade-inj { color: var(--color-warn); font-size: var(--text-xs); margin-top: 2px; font-weight: 700; }
 .trade-pre { color: var(--color-text-muted); font-weight: 600; }
 .trade-empty { color: var(--color-text-muted); padding: var(--space-3) 0; }
