@@ -10,25 +10,32 @@
      and does not shrink that total, so bye timing does not favor anyone.
      One projection per week is scored three ways from the same counting stats.
 
-   Games missed come off that shared total:
+   Missed games are filled by a replacement starter, not by zero.
+     Rest-of-season value is the healthy per-game surplus above the
+     positional baseline, times the share of remaining games he will play.
+     A missed week costs only his production minus replacement level.
      Questionable, or limited / DNP practice: 0.25 of a game.
      Doubtful: 0.75. Out: 1 game.
      IR or PUP: at least 4 games from the last game played. If that minimum
      is already served and the player is still on IR, count two more games
      unless a headline says he is practicing or designated to return
-     (then one more game) or names a return week. Weeks 15–18 still count
-     when he is back before the fantasy playoffs.
-     A long-term injury (ACL, Achilles, season-ending) removes the rest of
-     this season in redraft. Dynasty keeps a healthy outlook and discounts
-     it by 7 percent.
-     The first two games back from a multi-week layoff count at 0.80 and 0.90.
+     (then one more game) or names a return week.
+     Fantasy playoff weeks 14–17 count 1.5× inside that share, for every
+     player. Week 18 counts once. A bye is not a miss, so a week-14 bye
+     does not cost more than a week-6 bye.
+     The first game back from IR, or from a layoff of two games or more,
+     counts at 0.90. There is no second discount on top of that.
+     A long-term injury (ACL, Achilles, season-ending) plays no games, so
+     redraft value is near zero before ADP. Dynasty keeps the healthy
+     outlook and discounts it by 7 percent. A short absence shaves only
+     15 percent of the redraft haircut off dynasty.
      A vague injury blurb does not change the timeline.
 
    Hurt players, and anyone with no current-week projection, use a healthy
    baseline instead of a depressed or missing 2026 sample: 65 percent of the
    last season with at least 6 games, 35 percent of a games-weighted career.
-   Value = that per-game rate × expected games remaining. The card shows the
-   value before and after the injury discount.
+   The card shows the injury-adjusted value, the healthy value, and the
+   games he is expected to miss.
 
    Scarcity is a positional baseline, not a hard cutoff:
      1QB:       QB20, RB30, WR36, TE12
@@ -44,12 +51,12 @@
      player is never worth less than a worse one. The 0–100 scale divides
      by the largest curve value in that scoring, format, and horizon.
 
-   Dynasty is 60% rest-of-season (after the injury discount) and 40% a
+   Dynasty is 60% of the healthy rest-of-season total and 40% a
    next-season outlook: healthy points per game × 17 × age curve × role
    (volume versus the positional median, 0.75–1.15) × team offense
    (points per game versus the league, clamped 0.90–1.10). A short-term
-   injury discounts only this season. A long-term injury discounts the
-   whole dynasty figure by 7 percent.
+   injury only shaves a small part of that. A long-term injury discounts
+   the whole dynasty figure by 7 percent.
 
    Every team's starting quarterback, top running back, top receivers, and
    starting tight end stay searchable even when they are outside the top 150.
@@ -94,6 +101,10 @@
   // [redraft, dynasty]. Healthy players already sit on the healthy baseline,
   // so the smaller weight usually does not move them.
   const ADP_WEIGHT = { healthy: [0.05, 0.15], hurt: [0.30, 0.35] };
+  const PLAYOFF_WEIGHT = 1.5;
+  const RETURN_RAMP = 0.9;
+  // Share of the redraft haircut that dynasty feels on a short absence.
+  const DYNASTY_SHORT = 0.15;
 
   const AGE_CURVE = {
     QB: { start: 24, peak0: 28, peak1: 33, cliff: 38 },
@@ -305,6 +316,40 @@
     for (let i = 1; i <= whole; i++) eq += factor(i);
     if (frac > 1e-9) eq += frac * factor(whole + 1);
     return eq;
+  }
+
+  function weekWeight(week) {
+    return week >= 14 && week <= 17 ? PLAYOFF_WEIGHT : 1;
+  }
+
+  // Share of the weighted remaining slate he actually plays. Missed games
+  // come off the front. A fractional miss reduces that week. The first week
+  // with any play is the only ramp, and only when the timeline asks for it.
+  function playedShare(nextWeek, miss, ramp) {
+    if (miss === Infinity) return 0;
+    const start = nextWeek || 1;
+    const weights = [];
+    for (let wk = start; wk <= 18; wk++) weights.push(weekWeight(wk));
+    const total = weights.reduce((s, x) => s + x, 0);
+    if (!(total > 0)) return 0;
+    let left = Number(miss) || 0;
+    if (left < 0) left = 0;
+    let played = 0;
+    let ramped = false;
+    for (const wt of weights) {
+      if (left >= 1 - 1e-9) { left -= 1; continue; }
+      const frac = left > 1e-9 ? 1 - left : 1;
+      left = 0;
+      let piece = wt * frac;
+      if (ramp && !ramped) { piece *= RETURN_RAMP; ramped = true; }
+      played += piece;
+    }
+    if (played <= 0) return 0;
+    return played / total;
+  }
+
+  function dynastyShare(share) {
+    return 1 - DYNASTY_SHORT * (1 - (share || 0));
   }
 
   function parseNews(text) {
@@ -525,33 +570,43 @@
     const maxPar = { ppr: blank(), half: blank(), std: blank() };
     const repl = { ppr: { qb1: {}, sflex: {} }, half: { qb1: {}, sflex: {} }, std: { qb1: {}, sflex: {} } };
 
-    function measure(row, key, mode, horizon) {
-      if (horizon === 'dynasty' && row.dyn && row.dyn[key] != null) return row.dyn[key];
-      if (horizon === 'redraft') return row.ros[key];
-      return DYNASTY_ROS * row.ros[key] + DYNASTY_NEXT * row.nxt[key];
-    }
     function measureHealthy(row, key, mode, horizon) {
       if (horizon === 'dynasty' && row.dyn && row.dyn[key] != null) return row.dyn[key] / LONG_DYNASTY;
       if (horizon === 'redraft') return row.healthy[key];
       return DYNASTY_ROS * row.healthy[key] + DYNASTY_NEXT * row.nxtFull[key];
     }
 
+    for (const row of rows) {
+      row.share = row.timeline.long ? 0 : playedShare(nextWeek, row.timeline.miss, row.timeline.ramp);
+    }
+
+    // The replacement starter is a full-season healthy player. Missed games
+    // are worth that starter's points, so the line is not dragged down by
+    // the injured totals.
+    function surplusOf(row, key, mode, horizon) {
+      const hi = horizon === 'redraft' ? 0 : 1;
+      const healthyPts = measureHealthy(row, key, mode, horizon);
+      const line = (repl[key][mode][row.pl.pos] || [0, 0])[hi];
+      const healthySurplus = healthyPts - line;
+      if (horizon === 'dynasty' && row.timeline.long) return healthyPts * LONG_DYNASTY - line;
+      const share = horizon === 'redraft' ? row.share : dynastyShare(row.share);
+      if (!(share > 0)) return -line;
+      const surplus = share * healthySurplus;
+      return surplus > healthySurplus ? healthySurplus : surplus;
+    }
+
     for (const key of SCORINGS) {
       for (const mode of QB_MODES) {
         for (const horizon of ['redraft', 'dynasty']) {
           const byPos = {};
-          for (const row of rows) (byPos[row.pl.pos] = byPos[row.pl.pos] || []).push({ pts: measure(row, key, mode, horizon), row });
+          for (const row of rows) (byPos[row.pl.pos] = byPos[row.pl.pos] || []).push({ pts: measureHealthy(row, key, mode, horizon), row });
           const hi = horizon === 'redraft' ? 0 : 1;
           for (const pos of Object.keys(SLOTS[mode])) {
             repl[key][mode][pos] = repl[key][mode][pos] || [0, 0];
             repl[key][mode][pos][hi] = round1(replacementPoints(byPos[pos] || [], SLOTS[mode][pos]));
           }
           let max = 0;
-          for (const row of rows) {
-            const pts = measure(row, key, mode, horizon);
-            const line = (repl[key][mode][row.pl.pos] || [0, 0])[hi];
-            max = Math.max(max, curve(pts - line));
-          }
+          for (const row of rows) max = Math.max(max, curve(surplusOf(row, key, mode, horizon)));
           maxPar[key][mode][hi] = max;
         }
       }
@@ -568,9 +623,7 @@
           const packP = [];
           for (const horizon of ['redraft', 'dynasty']) {
             const hi = horizon === 'redraft' ? 0 : 1;
-            const pts = measure(row, key, mode, horizon);
-            const line = (repl[key][mode][row.pl.pos] || [0, 0])[hi];
-            const surplus = pts - line;
+            const surplus = surplusOf(row, key, mode, horizon);
             packP.push(round1(surplus));
             packV.push(scaled(surplus, maxPar[key][mode][hi]));
           }
@@ -604,6 +657,8 @@
         base: SCORINGS.map(k => round1(row.rate[k])),
         pre, v, par,
         inj: showInj ? { st: tl.label || (tl.long ? 'IR' : 'Injured'), body: tl.detail || null, ret: tl.ret, long: !!tl.long, miss: tl.miss, note: tl.note || '' } : null,
+        share: Math.round(row.share * 10000) / 10000,
+        week: nextWeek,
         starter: !!row.pl.starter,
       };
     }
@@ -622,7 +677,9 @@
       }
     }
     data.meta.trade = {
-      v: 4,
+      v: 5,
+      playoff: PLAYOFF_WEIGHT,
+      ramp: RETURN_RAMP,
       top: TOP_N,
       slots: SLOTS,
       curve: { t: CURVE_T },
@@ -636,6 +693,16 @@
     return data;
   }
 
+  function shareRatio(wasShare, nowShare, hi) {
+    const was = wasShare > 0 ? wasShare : 1;
+    if (hi === 1) {
+      const wasD = dynastyShare(was);
+      const nowD = dynastyShare(nowShare || 0);
+      return wasD > 0 ? nowD / wasD : 0;
+    }
+    return (nowShare || 0) / was;
+  }
+
   function valueOf(player, opts) {
     const tv = player && player.tv;
     if (!tv || !tv.v) return 0;
@@ -644,24 +711,20 @@
     const hi = opts && opts.horizon === 'dynasty' ? 1 : 0;
     const base = tv.v[scoring][mode][hi];
     const extra = opts && opts.newsMiss ? opts.newsMiss : 0;
+    const week = tv.week || 1;
     if (tv.inj) {
       const baked = tv.inj.long ? Infinity : (tv.inj.miss || 0);
       if (!(extra > baked) || tv.inj.long) return base;
-      const basis = tv.g || 1;
-      const now = gameEq(basis, extra, extra >= 2);
-      const was = gameEq(basis, baked, baked >= 2);
-      if (!was) return base;
-      if (hi === 1) return round1(base * (DYNASTY_ROS * (now / was) + DYNASTY_NEXT));
-      return round1(base * now / was);
+      const now = playedShare(week, extra, extra >= 2);
+      return round1(base * shareRatio(tv.share, now, hi));
     }
     const status = tv.season ? Infinity : (tv.miss || 0);
     const miss = combineMiss(status, extra);
     if (miss === status || !tv.g) return base;
-    const built = availability(tv.g, status);
-    const now = availability(tv.g, miss);
-    const factor = built > 0 ? now / built : 0;
-    if (hi === 1) return round1(base * (DYNASTY_ROS * factor + DYNASTY_NEXT));
-    return round1(base * factor);
+    if (miss === Infinity) return hi === 1 ? round1(base * LONG_DYNASTY) : 0;
+    const now = playedShare(week, miss, miss >= 2);
+    const was = tv.share > 0 ? tv.share : playedShare(week, status, status >= 2);
+    return round1(base * shareRatio(was, now, hi));
   }
 
   function adjustSide(raw, count, otherCount) {
@@ -720,8 +783,15 @@
     const winner = pct <= 0.04 ? 'even' : (adjA.total > adjB.total ? 'a' : 'b');
     const pool = A.concat(B).slice().sort((a, b) => num(b.value) - num(a.value));
     if (pool[0]) notes.unshift(pool[0].name + ' is the largest piece (' + round1(pool[0].value) + ').');
-    const hurt = A.concat(B).filter(p => p.miss);
-    if (hurt.length) notes.push(hurt.map(p => p.name).join(', ') + (hurt.length > 1 ? ' are' : ' is') + ' discounted for games expected to be missed.');
+    const returning = A.concat(B).filter(p => p.ret);
+    if (returning.length === 1) {
+      const p = returning[0];
+      notes.push(p.name + "'s value counts the games after his week " + p.ret + " return. A replacement starter covers the weeks he misses.");
+    } else if (returning.length > 1) {
+      const bits = returning.map(p => p.name + ' (week ' + p.ret + ')');
+      const list = bits.length === 2 ? bits[0] + ' and ' + bits[1] : bits.slice(0, -1).join(', ') + ', and ' + bits[bits.length - 1];
+      notes.push('Return timing sets the value for ' + list + '. A replacement starter covers the weeks they miss.');
+    }
     let verdict;
     if (winner === 'even') verdict = 'Fair. The sides are within ' + gap.toFixed(1) + '.';
     else {
@@ -1039,7 +1109,14 @@
     const extra = newsMiss(items);
     const status = pl.tv.season ? Infinity : (pl.tv.miss || 0);
     const miss = combineMiss(status, extra);
-    return { id: pl.id, name: pl.name, pos: pl.pos, team: pl.team, value: liveValue(pl), miss: miss === Infinity ? 'season' : miss, pl };
+    const inj = pl.tv.inj;
+    return {
+      id: pl.id, name: pl.name, pos: pl.pos, team: pl.team, value: liveValue(pl),
+      miss: miss === Infinity ? 'season' : miss,
+      ret: inj && inj.ret ? inj.ret : null,
+      long: !!(inj && inj.long),
+      pl,
+    };
   }
   function renderTrade() {
     const app = ml();
@@ -1061,11 +1138,24 @@
           } catch (e) { range = 'No weekly projection'; }
         }
         const tag = injLabel(row.pl);
-        const pre = preValue(row.pl);
-        const was = pre != null && pre - row.value >= 0.5 ? `<span class="trade-pre">${pre.toFixed(1)} if healthy</span>` : '';
+        const injured = !!(row.pl.tv && row.pl.tv.inj);
         const adpNum = tradeState.qb === 'sflex' && row.pl.adp_sf > 0 ? row.pl.adp_sf : row.pl.adp;
         const adp = adpNum > 0 ? ` · <span class="trade-adp" title="Season-to-date average draft position. Most of it comes from preseason drafts, so it is not a live trade price.">ADP ${Number(adpNum).toFixed(1)}</span>` : '';
-        return `<li class="trade-card"><div><div class="trade-name">${esc(row.name)} <span class="pos ${esc(row.pos)}">${esc(row.pos)}</span> <span class="meta">${esc(row.team)}</span></div>${tag ? `<div class="trade-inj">${esc(tag)}</div>` : ''}<div class="trade-meta"><b class="trade-val">${row.value.toFixed(1)}</b> value${adp}${was ? ' · ' + was : ''} · ${range}</div></div><button type="button" class="trade-x" data-side="${side}" data-id="${esc(row.id)}" aria-label="Remove ${esc(row.name)} from side ${side.toUpperCase()}">×</button></li>`;
+        let facts = '';
+        if (injured) {
+          const pre = preValue(row.pl);
+          const healthy = pre != null ? `<div class="trade-meta"><span class="trade-k">Healthy value</span> <b class="trade-pre">${pre.toFixed(1)}</b></div>` : '';
+          const inj = row.pl.tv.inj;
+          let missed = 'Expected games missed: rest of season';
+          if (!inj.long && !row.long) {
+            const n = Math.round((Number(inj.miss) || 0) * 100) / 100;
+            const games = n === 1 ? '1 game' : n + ' games';
+            missed = 'Expected games missed: ' + games + (inj.ret ? ' · return week ' + inj.ret : '');
+          }
+          facts = healthy + `<div class="trade-meta">${esc(missed)}</div>`;
+        }
+        const valueLabel = injured ? 'Injury-adjusted value' : 'value';
+        return `<li class="trade-card"><div><div class="trade-name">${esc(row.name)} <span class="pos ${esc(row.pos)}">${esc(row.pos)}</span> <span class="meta">${esc(row.team)}</span></div>${tag ? `<div class="trade-inj">${esc(tag)}</div>` : ''}<div class="trade-meta"><b class="trade-val">${row.value.toFixed(1)}</b> ${valueLabel}${adp} · ${range}</div>${facts}</div><button type="button" class="trade-x" data-side="${side}" data-id="${esc(row.id)}" aria-label="Remove ${esc(row.name)} from side ${side.toUpperCase()}">×</button></li>`;
       }).join('') || '<li class="trade-empty">No players yet.</li>';
       host.querySelectorAll('.trade-x').forEach(btn => btn.addEventListener('click', () => {
         tradeState[btn.dataset.side] = tradeState[btn.dataset.side].filter(id => id !== btn.dataset.id);
@@ -1197,7 +1287,8 @@
     SCORINGS, QB_MODES, SLOTS, DYNASTY_ROS, DYNASTY_NEXT, CONSOLIDATION, CONSOLIDATION_CAP, TOP_N, CURVE_T, AGE_CURVE, PREF,
     curve, scaled,
     missFromText, statusMiss, newsMiss, combineMiss, availability, ageFactor, roleFactor, teamFactor, pointsOf,
-    gamesBasis, gameEq, parseNews, injuryPlan, sumOutlook, IR_MIN, LONG_DYNASTY,
+    gamesBasis, gameEq, weekWeight, playedShare, dynastyShare, PLAYOFF_WEIGHT, RETURN_RAMP, DYNASTY_SHORT,
+    parseNews, injuryPlan, sumOutlook, IR_MIN, LONG_DYNASTY,
     ageFromBirth, spearman, adjustSide, gradeGap, analyze, fairer, tierOf, valueOf, attachTrade, backtest, round1,
     fitAdpCurve, blendValue, blendAdp, ADP_WEIGHT,
     ensure, init, render: renderTrade,

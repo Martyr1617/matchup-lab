@@ -111,7 +111,8 @@ test('published values sit on a 0–100 scale with scarcity and injury', () => {
   }
   const best = Math.max(...skill.map(p => p.tv.v.ppr.qb1[0]));
   assert.equal(best, 100);
-  assert.equal(data.meta.trade.v, 4);
+  assert.equal(data.meta.trade.v, 5);
+  assert.equal(data.meta.trade.playoff, 1.5);
   assert.equal(data.meta.trade.slots.qb1.QB, 20);
   assert.equal(data.meta.trade.slots.sflex.QB, 32);
   const priced = p => p.adp && p.tv.inj;
@@ -170,6 +171,28 @@ test('a bye is not a missed game and every player shares the games basis', () =>
   assert.equal(pack.players[0].tv.ros[0], pack.players[1].tv.ros[0]);
   assert.ok(pack.players[0].tv.ros[0] > 0);
   assert.equal(pack.players[0].tv.g, 13);
+});
+
+test('playoff weeks count extra and a soon return keeps most of the healthy share', () => {
+  assert.equal(trade.PLAYOFF_WEIGHT, 1.5);
+  assert.equal(trade.RETURN_RAMP, 0.9);
+  assert.equal(trade.DYNASTY_SHORT, 0.15);
+  assert.equal(trade.weekWeight(6), 1);
+  assert.equal(trade.weekWeight(14), 1.5);
+  assert.equal(trade.weekWeight(17), 1.5);
+  assert.equal(trade.weekWeight(18), 1);
+  assert.equal(trade.playedShare(6, 0, false), 1);
+  assert.equal(trade.playedShare(6, Infinity, false), 0);
+  const soon = trade.playedShare(6, 1, true);
+  assert.ok(Math.abs(soon - 13.9 / 15) < 1e-9, 'brown share ' + soon);
+  const later = trade.playedShare(6, 4, true);
+  assert.ok(Math.abs(later - 10.9 / 15) < 1e-9, 'week-10 share ' + later);
+  assert.ok(later < soon - 0.15);
+  const earlyMiss = 1 - trade.playedShare(6, 1, false);
+  const playoffMiss = 1 - trade.playedShare(14, 1, false);
+  assert.ok(playoffMiss > earlyMiss, playoffMiss + ' vs ' + earlyMiss);
+  const shave = 1 - soon;
+  assert.ok(Math.abs(trade.dynastyShare(soon) - (1 - 0.15 * shave)) < 1e-9);
 });
 
 test('IR timelines keep a return and an ACL is a redraft zero', () => {
@@ -254,7 +277,10 @@ test('starters and injured stars stay searchable', () => {
   const brownRank = order.findIndex(p => p.id === brown.id);
   assert.ok(brownRank >= 0 && brownRank < 80, 'rank ' + brownRank);
   assert.ok(brown.tv.v.ppr.qb1[0] > 10, 'redraft ' + brown.tv.v.ppr.qb1[0]);
-  assert.ok(brown.tv.pre.ppr.qb1[0] > brown.tv.v.ppr.qb1[0]);
+  const brownGap = 1 - brown.tv.v.ppr.qb1[0] / brown.tv.pre.ppr.qb1[0];
+  assert.ok(brownGap >= 0 && brownGap <= 0.15, 'gap ' + brownGap + ' value ' + brown.tv.v.ppr.qb1[0] + ' healthy ' + brown.tv.pre.ppr.qb1[0]);
+  const brownDyn = 1 - brown.tv.v.ppr.qb1[1] / brown.tv.pre.ppr.qb1[1];
+  assert.ok(brownDyn >= -0.001 && brownDyn <= 0.05, 'dynasty gap ' + brownDyn);
   assert.equal(brown.tv.inj && brown.tv.inj.ret, 7);
   assert.match(brown.tv.inj.st + ' ' + brown.tv.inj.body, /IR/);
   assert.match(brown.tv.inj.body, /Ankle/);
@@ -363,4 +389,8 @@ test('the trade tab, prefs, and cache name the new script', () => {
   assert.match(src, /ml-trade-horizon/);
   assert.match(sw, /trade\.js/);
   assert.match(sw, /data\|market\|news/);
+  assert.match(src, /Healthy value/);
+  assert.match(src, /Injury-adjusted value/);
+  assert.match(src, /Expected games missed/);
+  assert.match(src, /A replacement starter covers the weeks he misses/);
 });
