@@ -32,7 +32,9 @@ test('service worker versions the shell and prefers fresh projection files', () 
   assert.match(sw, /const SHELL_CACHE = 'ml-shell-' \+ VER;/);
   assert.match(sw, /const DATA_CACHE = 'ml-data';/);
   assert.match(sw, /function isProjectionData/);
-  assert.match(sw, /data\|market/);
+  assert.match(sw, /data\|market\|news/);
+  assert.match(read('index.html'), /data-view="news"/);
+  assert.match(read('app.js'), /news\.json/);
   assert.match(sw, /async function networkFirstData/);
   assert.doesNotMatch(sw, /caches\.match\(request\)[\s\S]{0,80}data\.json/);
   const dataFn = sw.slice(sw.indexOf('async function networkFirstData'), sw.indexOf('async function fromShell'));

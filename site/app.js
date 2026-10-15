@@ -3,7 +3,7 @@
   'use strict';
 
   // ---------- State ----------
-  const state = { data: null, week: null, scoring: 'ppr', pos: 'ALL', liveInj: null, view: 'board', player: null, theme: null, defSort: { key: 'fp_RB', dir: 1 } };
+  const state = { data: null, week: null, scoring: 'ppr', pos: 'ALL', liveInj: null, view: 'board', player: null, theme: null, news: null, newsByPlayer: {}, newsFilter: 'all', defSort: { key: 'fp_RB', dir: 1 } };
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 
@@ -225,6 +225,80 @@
     if (missedLast(pl)) return `<span class="flag">Missed Wk ${lc}</span>`;
     return '';
   }
+  function newsItemsFor(id) { return (id && state.newsByPlayer[id]) || []; }
+  function hasInjuryNews(id) { return newsItemsFor(id).some(item => item.injury); }
+  function rosterIds() { return (window.MLTeam && window.MLTeam.rosterIds) ? window.MLTeam.rosterIds() : []; }
+  function newsBadge(pl) {
+    if (!pl) return '';
+    const items = newsItemsFor(pl.id);
+    if (!items.length) return '';
+    const inj = items.some(item => item.injury);
+    const title = esc(items[0].headline || '');
+    return `<span class="news-badge${inj ? ' inj' : ''}" title="${title}">${inj ? 'Injury' : 'News'}</span>`;
+  }
+  function ago(ts) {
+    const t = Date.parse(ts || '');
+    if (!Number.isFinite(t)) return '';
+    const min = Math.max(0, Math.round((Date.now() - t) / 60000));
+    if (min < 60) return (min || 1) + 'm ago';
+    const hr = Math.round(min / 60);
+    if (hr < 36) return hr + 'h ago';
+    return Math.round(hr / 24) + 'd ago';
+  }
+  function newsCard(item) {
+    const who = [item.player, item.team].filter(Boolean).join(' · ');
+    const when = ago(item.ts);
+    return `<a class="news-card${item.injury ? ' inj' : ''}" href="${esc(item.url)}" target="_blank" rel="noopener noreferrer">
+      <span class="news-hl">${esc(item.headline)}</span>
+      <span class="news-meta">${esc(item.source || 'News')}${when ? ' · ' + when : ''}${who ? ' · ' + esc(who) : ''}</span>
+    </a>`;
+  }
+  function indexNews() {
+    const by = {};
+    for (const item of (state.news && state.news.items) || []) {
+      if (!item || !item.player_id) continue;
+      (by[item.player_id] || (by[item.player_id] = [])).push(item);
+    }
+    state.newsByPlayer = by;
+  }
+  function playerNewsCard(pl) {
+    const items = newsItemsFor(pl.id).slice(0, 4);
+    if (!items.length) return '';
+    const inj = items.some(item => item.injury);
+    return `<div class="card news-player${inj ? ' inj' : ''}"><div class="card-title">${inj ? 'Injury news' : 'Latest news'}</div><div class="news-list">${items.map(newsCard).join('')}</div></div>`;
+  }
+  function renderNews() {
+    const box = $('#newsList');
+    if (!box) return;
+    const doc = state.news;
+    const status = $('#newsStatus');
+    if (!doc || !Array.isArray(doc.items)) {
+      if (status) { status.hidden = false; status.className = 'notice'; status.textContent = 'News is not available right now. Projections are unchanged.'; }
+      box.innerHTML = '';
+      return;
+    }
+    if (status) {
+      status.hidden = !doc.stale;
+      status.className = 'notice';
+      status.textContent = doc.stale ? (doc.stale_reason || 'Showing the last news file. The latest fetch failed.') : '';
+    }
+    const worked = (doc.sources || []).filter(s => s.ok).map(s => s.label);
+    const skipped = (doc.sources || []).find(s => s.id === 'x');
+    const sub = $('#newsSub');
+    if (sub) {
+      const when = doc.generated ? `Updated ${doc.generated}. ` : '';
+      sub.textContent = `${when}${worked.length ? worked.join(', ') + '.' : 'No feeds responded.'} ${skipped ? 'X posts are not included.' : ''}`.trim();
+    }
+    const roster = new Set(rosterIds());
+    let items = doc.items.slice();
+    if (state.newsFilter === 'injury') items = items.filter(item => item.injury);
+    if (state.newsFilter === 'roster') items = items.filter(item => item.player_id && roster.has(item.player_id));
+    if (!items.length) {
+      box.innerHTML = `<p class="sub">${state.newsFilter === 'roster' && !roster.size ? 'Connect a team on My Team to see news for your roster.' : 'No headlines in this filter.'}</p>`;
+      return;
+    }
+    box.innerHTML = items.map(newsCard).join('');
+  }
   async function loadLiveInjuries() {
     const F = JSON.stringify({ players: { filterInjured: { value: true }, filterSlotIds: { value: [0, 2, 4, 6] }, filterStatsForExternalIds: { value: [2099] }, sortPercOwned: { sortAsc: false, sortPriority: 1 }, limit: 600 } });
     try {
@@ -291,10 +365,12 @@
       const opp = oppSummary(pl).map(([k, v]) => `<span class="chip">${k} <b>${v ?? '—'}</b></span>`).join('');
       const flags = [pr.reg ? `<span class="flagc ${pr.reg.type}" title="${esc(pr.reg.why)}">${pr.reg.type === 'buy' ? 'Regression: up' : 'Fade'}</span>` : '',
         pr.diverge ? `<span class="flagc mkt" title="Market-implied ${f1(pr.mktPts)} vs model ${f1(pr.modelPts)}">Market ${pr.diverge}</span>` : ''].join('');
+      const onRoster = rosterIds().includes(pl.id);
+      const injNews = onRoster && hasInjuryNews(pl.id);
       return `
-      <tr data-id="${esc(pl.id)}" tabindex="0" role="link" aria-label="Open ${esc(pl.name)}">
+      <tr class="${injNews ? 'has-news-inj' : ''}" data-id="${esc(pl.id)}" tabindex="0" role="link" aria-label="Open ${esc(pl.name)}">
         <td class="num rank">${i + 1}</td>
-        <td><div class="pcell">${avatar(pl, 'avatar')}<div><div class="name">${esc(pl.name)} ${statusFlag(pl)}</div><div class="meta"><span class="pos ${pl.pos}">${pl.pos}</span> ${esc(pl.team)}<span class="m-only"> · ${pr.home ? 'vs' : '@'} ${esc(pr.opp)}${vg ? ` · ITT ${f1(vg.itt)}` : ''}</span></div></div></div></td>
+        <td><div class="pcell">${avatar(pl, 'avatar')}<div><div class="name">${esc(pl.name)} ${statusFlag(pl)} ${newsBadge(pl)}</div><div class="meta"><span class="pos ${pl.pos}">${pl.pos}</span> ${esc(pl.team)}<span class="m-only"> · ${pr.home ? 'vs' : '@'} ${esc(pr.opp)}${vg ? ` · ITT ${f1(vg.itt)}` : ''}</span></div></div></div></td>
         <td class="matchup"><span class="vs">${pr.home ? 'vs' : '@'}</span> ${esc(pr.opp)} <span class="grade ${pr.grade.cls} sm">${pr.grade.label}</span><span class="when">${fmtKick(pr.game)}</span>${vegasLine}${weatherChip(pr.game, pr)}</td>
         <td>${propCell}</td>
         <td><div class="chips">${opp}</div></td>
@@ -447,7 +523,7 @@
           ${avatar(pl, 'avatar-lg')}
           <div>
             <h1>${esc(pl.name)}</h1>
-            <div class="line"><span class="pos ${pl.pos}">${pl.pos}</span><span>${esc(tn(pl.team))}</span><span>·</span><span>${pl.g} games · ${f1(state.scoring === 'std' ? pl.std_pg : pl.ppr_pg)} ${state.scoring === 'std' ? 'std' : 'PPR'} pts/g</span>${statusFlag(pl)}</div>
+            <div class="line"><span class="pos ${pl.pos}">${pl.pos}</span><span>${esc(tn(pl.team))}</span><span>·</span><span>${pl.g} games · ${f1(state.scoring === 'std' ? pl.std_pg : pl.ppr_pg)} ${state.scoring === 'std' ? 'std' : 'PPR'} pts/g</span>${statusFlag(pl)} ${newsBadge(pl)}</div>
           </div>
         </div>
         ${pr.bye ? '' : `<div class="proj-hero">
@@ -459,7 +535,7 @@
       </div>`;
 
     if (pr.bye) {
-      view.innerHTML = head + `<div class="card bye">${esc(pl.name)} is on bye in Week ${state.week}. Choose another week to see a projection.</div>` + gameLogCard(pl);
+      view.innerHTML = head + playerNewsCard(pl) + `<div class="card bye">${esc(pl.name)} is on bye in Week ${state.week}. Choose another week to see a projection.</div>` + gameLogCard(pl);
       bindPlayerView();
       return;
     }
@@ -490,7 +566,7 @@
     }).join('');
     const off = state.data.team_off[pl.team] || {};
 
-    view.innerHTML = head + missedNote + layerCards(pl, pr) + `
+    view.innerHTML = head + missedNote + playerNewsCard(pl) + layerCards(pl, pr) + `
       <div class="grid-2">
         <div class="card">
           <div class="card-title">Fantasy point distribution · P(outcome)</div>
@@ -769,7 +845,7 @@
     const ga = Object.fromEntries(ra), gb = Object.fromEntries(rb);
     const winner = pa.pts >= pb.pts ? a : b;
     return `<div class="cmp-verdict">Start <b>${esc(winner.name)}</b> · ${f1(Math.max(pa.pts, pb.pts))} vs ${f1(Math.min(pa.pts, pb.pts))} projected ${SCORING[state.scoring].name} pts</div>
-      <table class="cmp-table"><thead><tr><th></th><th>${esc(a.name)} <span class="pos ${a.pos}">${a.pos}</span><div class="meta">${pa.home ? 'vs' : '@'} ${esc(pa.opp)}</div></th><th>${esc(b.name)} <span class="pos ${b.pos}">${b.pos}</span><div class="meta">${pb.home ? 'vs' : '@'} ${esc(pb.opp)}</div></th></tr></thead>
+      <table class="cmp-table"><thead><tr><th></th><th>${esc(a.name)} <span class="pos ${a.pos}">${a.pos}</span> ${newsBadge(a)}<div class="meta">${pa.home ? 'vs' : '@'} ${esc(pa.opp)}</div></th><th>${esc(b.name)} <span class="pos ${b.pos}">${b.pos}</span> ${newsBadge(b)}<div class="meta">${pb.home ? 'vs' : '@'} ${esc(pb.opp)}</div></th></tr></thead>
       <tbody>${keys.map(k => `<tr><td>${k}</td><td>${ga[k] ?? '<span class="na">—</span>'}</td><td>${gb[k] ?? '<span class="na">—</span>'}</td></tr>`).join('')}</tbody></table>`;
   }
   function renderCompare() {
@@ -798,8 +874,9 @@
     if (v === 'player' && state.player) renderPlayer(state.player);
     if (v === 'team' && window.MLTeam) window.MLTeam.render();
     if (v === 'compare') renderCompare();
+    if (v === 'news') renderNews();
   }
-  function rerender() { if (state.view === 'board') renderBoard(); else if (state.view === 'player' && state.player) renderPlayer(state.player); else if (state.view === 'team' && window.MLTeam) window.MLTeam.render(); else if (state.view === 'compare') renderCompare(); }
+  function rerender() { if (state.view === 'board') renderBoard(); else if (state.view === 'player' && state.player) renderPlayer(state.player); else if (state.view === 'team' && window.MLTeam) window.MLTeam.render(); else if (state.view === 'compare') renderCompare(); else if (state.view === 'news') renderNews(); }
 
   function initControls() {
     const sel = $('#weekSelect');
@@ -820,6 +897,7 @@
       }));
     };
     seg('#scoringSeg', v => { state.scoring = v; rerender(); });
+    seg('#newsSeg', v => { state.newsFilter = v; renderNews(); });
     seg('#posSeg', v => { state.pos = v; renderBoard(); });
     $$('.tab').forEach(t => t.addEventListener('click', () => { if (!t.disabled) setView(t.dataset.view); }));
     $('#brandLink').addEventListener('click', e => { e.preventDefault(); setView('board'); });
@@ -905,9 +983,11 @@
       for (const wk in state.data.schedule) state.data.schedule[wk] = state.data.schedule[wk].filter(g => TM.test(g.home) && TM.test(g.away)); }
     const getM = async u => { const r = await fetch(u, { cache: 'no-cache' }); if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); };
     try { state.market = await getM(REMOTE + 'market.json?t=' + Math.floor(Date.now() / 6e5)); } catch (e) { try { state.market = await getM('market.json?v=' + (window.ML_VER || Date.now())); } catch (e2) { state.market = null; } }
+    try { state.news = await getM(REMOTE + 'news.json?t=' + Math.floor(Date.now() / 6e5)); } catch (e) { try { state.news = await getM('news.json?v=' + (window.ML_VER || Date.now())); } catch (e2) { state.news = null; } }
+    indexNews();
     const safe = (fn, name) => { try { fn(); } catch (e) { console.error(name, e); } };
     safe(initControls, 'controls'); safe(initSearch, 'search'); safe(renderBoard, 'board'); loadLiveInjuries();
-    window.ML = { state, SCORING, weatherChip, weatherText, loadWeather, injuryOf, isOut, project, makeDist, gameFor, f1, f2, pct, esc, avatar, statusFlag, openPlayer, rkOrd, fmtKick, tn, setView, compareRows, compareTable };
+    window.ML = { state, SCORING, weatherChip, weatherText, loadWeather, injuryOf, isOut, project, makeDist, gameFor, f1, f2, pct, esc, avatar, statusFlag, newsBadge, hasInjuryNews, openPlayer, rkOrd, fmtKick, tn, setView, compareRows, compareTable, renderNews, renderBoard };
     if (window.MLTeam) window.MLTeam.init();
   }
   boot();

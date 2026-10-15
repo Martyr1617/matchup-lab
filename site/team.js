@@ -432,7 +432,8 @@
     const injFlag = p.inj && p.status !== 'out' ? `<span class="flag">${ML.esc(p.inj)}</span>` : '';
     const outFlag = p.status === 'out' ? `<span class="flag out">${ML.esc(p.note)}</span>` : p.status === 'bye' ? `<span class="flag">Bye</span>` : '';
     const lock = p.locked ? `<span class="flag lock" title="Game has started">Locked</span>` : '';
-    return `<div class="pcell${p.ml ? ' link' : ''}"${click}>${p.ml ? ML.avatar(p.ml, 'avatar') : `<span class="avatar"></span>`}<div><div class="name">${ML.esc(p.name)} ${outFlag}${injFlag}${lock}</div><div class="meta"><span class="pos ${p.pos}">${p.pos}</span> ${ML.esc(p.team || '')}${p.pr && !p.pr.bye ? `<span class="m-only"> · ${p.pr.home ? 'vs' : '@'} ${ML.esc(p.pr.opp)}</span>` : ''}</div></div></div>`;
+    const news = p.ml && ML.newsBadge ? ML.newsBadge(p.ml) : '';
+    return `<div class="pcell${p.ml ? ' link' : ''}"${click}>${p.ml ? ML.avatar(p.ml, 'avatar') : `<span class="avatar"></span>`}<div><div class="name">${ML.esc(p.name)} ${outFlag}${injFlag}${lock}${news}</div><div class="meta"><span class="pos ${p.pos}">${p.pos}</span> ${ML.esc(p.team || '')}${p.pr && !p.pr.bye ? `<span class="m-only"> · ${p.pr.home ? 'vs' : '@'} ${ML.esc(p.pr.opp)}</span>` : ''}</div></div></div>`;
   }
   function matchupCell(p) {
     if (!p || !p.pr || p.pr.bye) return '<span class="sub">—</span>';
@@ -486,7 +487,8 @@
       if (slot === 'K' || slot === 'DEF') status = `<span class="grade neutral">Not projected</span>`;
       else if (!p) status = `<span class="grade bad">Empty</span>`;
       else if (A.current) status = curKeys.has(p.key) ? `<span class="grade neutral">Starting</span>` : `<span class="grade good">Move in</span>`;
-      return `<tr><td>${slotBadge(slot)}</td><td>${playerCell(p, { emptyNote: slot === 'K' || slot === 'DEF' ? 'none on roster' : 'check waivers' })}</td><td class="c-mu">${matchupCell(p)}</td><td class="num">${projCell(p)}</td><td class="num c-rng">${rangeCell(p)}</td><td>${status}</td></tr>`;
+      const injNews = p && p.ml && ML.hasInjuryNews && ML.hasInjuryNews(p.ml.id);
+      return `<tr${injNews ? ' class="has-news-inj"' : ''}><td>${slotBadge(slot)}</td><td>${playerCell(p, { emptyNote: slot === 'K' || slot === 'DEF' ? 'none on roster' : 'check waivers' })}</td><td class="c-mu">${matchupCell(p)}</td><td class="num">${projCell(p)}</td><td class="num c-rng">${rangeCell(p)}</td><td>${status}</td></tr>`;
     }).join('');
     const lineupCard = `
       <div class="card flush">
@@ -494,7 +496,10 @@
         <div class="tscroll"><table class="team-table"><thead><tr><th>Slot</th><th>Player</th><th class="c-mu">Matchup</th><th class="num">Proj</th><th class="num c-rng">Floor–Ceiling</th><th>Status</th></tr></thead><tbody>${lineupRows}</tbody></table></div>
       </div>`;
 
-    const benchRows = A.bench.map(p => `<tr><td>${playerCell(p)}</td><td class="c-mu">${matchupCell(p)}</td><td class="num">${projCell(p)}</td><td class="num c-rng">${rangeCell(p)}</td><td>${curKeys.has(p.key) ? '<span class="grade bad">Bench</span>' : p.note ? `<span class="sub">${ML.esc(p.note)}</span>` : ''}</td></tr>`).join('');
+    const benchRows = A.bench.map(p => {
+      const injNews = p && p.ml && ML.hasInjuryNews && ML.hasInjuryNews(p.ml.id);
+      return `<tr${injNews ? ' class="has-news-inj"' : ''}><td>${playerCell(p)}</td><td class="c-mu">${matchupCell(p)}</td><td class="num">${projCell(p)}</td><td class="num c-rng">${rangeCell(p)}</td><td>${curKeys.has(p.key) ? '<span class="grade bad">Bench</span>' : p.note ? `<span class="sub">${ML.esc(p.note)}</span>` : ''}</td></tr>`;
+    }).join('');
     const benchCard = `
       <div class="card flush">
         <div class="card-title pad">Bench</div>
@@ -545,6 +550,15 @@
       ${teamPicker}
       ${L && T.teamId ? renderResults() : ''}`;
     bind();
+    if (ML.state.view === 'board' && ML.renderBoard) ML.renderBoard();
+    if (ML.state.view === 'news' && ML.renderNews) ML.renderNews();
+  }
+  function rosterIds() {
+    const L = T.league;
+    if (!L || T.teamId == null) return [];
+    const team = L.teams.find(t => String(t.id) === String(T.teamId));
+    if (!team) return [];
+    return team.players.map(p => p.ml && p.ml.id).filter(Boolean);
   }
 
   function bind() {
@@ -667,5 +681,5 @@
     else render();
   }
 
-  window.MLTeam = { init, render: onRender, _analyze: (...a) => analyze(...a), _T: T };
+  window.MLTeam = { init, render: onRender, rosterIds, _analyze: (...a) => analyze(...a), _T: T };
 })();

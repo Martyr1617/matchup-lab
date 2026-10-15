@@ -515,6 +515,33 @@ tbody tr:last-child td { border-bottom: 0; }
 .method-grid .mp { margin-top: var(--space-3); }
 .method-grid .mp:first-child { margin-top: 0; }
 
+/* ---------- News ---------- */
+.news-list { display: grid; gap: var(--space-3); }
+.news-card {
+  display: grid; gap: 4px; padding: var(--space-4);
+  background: var(--color-surface); color: inherit; text-decoration: none;
+  border: 1px solid var(--color-border); border-radius: var(--radius-lg); box-shadow: var(--shadow);
+  border-top: 2px solid color-mix(in oklab, var(--color-gold) 50%, var(--color-border));
+}
+.news-card:hover { border-color: var(--color-gold); }
+.news-card.inj { border-left: 3px solid var(--color-bad); background: color-mix(in oklab, var(--color-bad) 10%, var(--color-surface)); }
+.news-hl { font-weight: 700; line-height: 1.35; }
+.news-meta { color: var(--color-text-muted); font-size: var(--text-xs); }
+.news-badge {
+  display: inline-flex; align-items: center; margin-left: 4px;
+  padding: 1px 7px; border-radius: 999px; font-size: 10px; font-weight: 800;
+  letter-spacing: 0.04em; text-transform: uppercase;
+  background: color-mix(in oklab, var(--color-gold) 22%, transparent); color: var(--color-gold);
+}
+.news-badge.inj { background: var(--color-bad-bg); color: var(--color-bad); }
+.news-player { margin-bottom: var(--space-5); }
+.news-player.inj { border-color: color-mix(in oklab, var(--color-bad) 55%, var(--color-border)); }
+tr.has-news-inj { background: color-mix(in oklab, var(--color-bad) 16%, var(--color-surface)); box-shadow: inset 3px 0 0 var(--color-bad); }
+.board tbody tr.has-news-inj:hover { background: color-mix(in oklab, var(--color-bad) 24%, var(--color-surface-2)); }
+@media (max-width: 600px) {
+  .news-card { min-height: 44px; }
+}
+
 /* ---------- Glossary ---------- */
 .term { cursor: help; text-decoration: underline dotted; text-decoration-color: var(--color-text-faint); text-underline-offset: 3px; }
 .term:hover, .term:focus-visible { text-decoration-color: var(--color-primary); color: var(--color-text); outline: none; }
