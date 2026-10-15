@@ -59,4 +59,6 @@ fetch data/pfr_rec_2026.csv      "$B/pfr_advstats/advstats_week_rec_2026.csv" 0
 fetch data/ftn_2026.csv          "$B/ftn_charting/ftn_charting_2026.csv" 0
 fetch data/ep_2026.csv           "https://github.com/ffverse/ffopportunity/releases/download/latest-data/ep_weekly_2026.csv" 0
 python3 build_data.py
+# News is optional. A broken feed must not fail the projection build.
+python3 fetch_news.py site/data.json site/news.json ${ML_PREV_NEWS:-} || echo "WARN: news build failed; projections are unchanged"
 python3 stamp.py
