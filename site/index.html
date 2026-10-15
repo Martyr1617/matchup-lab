@@ -17,7 +17,33 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="Matchup Lab" />
 <meta name="theme-color" content="#0b3d24" />
-<link rel="stylesheet" href="styles.css?v=27aae587f7" />
+<script id="theme-boot">
+(function () {
+  var KEY_A = 'ml-appearance', KEY_T = 'ml-team';
+  var appearance = 'system', team = 'ml';
+  try {
+    appearance = localStorage.getItem(KEY_A) || 'system';
+    team = localStorage.getItem(KEY_T) || 'ml';
+  } catch (e) {}
+  if (appearance !== 'light' && appearance !== 'dark' && appearance !== 'system') appearance = 'system';
+  var THEMES = [{"id":"ml","name":"Matchup Lab","division":"","primary":"#0B3D24","secondary":"#F5C518","chrome":{"light":"#0a2e1d","dark":"#04140d"}},{"id":"buf","name":"Buffalo Bills","division":"AFC East","primary":"#00338d","secondary":"#c60c30","chrome":{"light":"#efefee","dark":"#051126"}},{"id":"mia","name":"Miami Dolphins","division":"AFC East","primary":"#008e97","secondary":"#fc4c02","chrome":{"light":"#ecf1ec","dark":"#052528"}},{"id":"ne","name":"New England Patriots","division":"AFC East","primary":"#002244","secondary":"#c60c30","chrome":{"light":"#f0efeb","dark":"#050d16"}},{"id":"nyj","name":"New York Jets","division":"AFC East","primary":"#125740","secondary":"#000000","chrome":{"light":"#eeefe9","dark":"#091915"}},{"id":"bal","name":"Baltimore Ravens","division":"AFC North","primary":"#241773","secondary":"#9e7c0c","chrome":{"light":"#f1eeed","dark":"#0d0b20"}},{"id":"cin","name":"Cincinnati Bengals","division":"AFC North","primary":"#fb4f14","secondary":"#000000","chrome":{"light":"#f8eee6","dark":"#3c170b"}},{"id":"cle","name":"Cleveland Browns","division":"AFC North","primary":"#311d00","secondary":"#ff3c00","chrome":{"light":"#f1eee8","dark":"#0f0c07"}},{"id":"pit","name":"Pittsburgh Steelers","division":"AFC North","primary":"#ffb612","secondary":"#101820","chrome":{"light":"#f8f3e6","dark":"#3d2e0b"}},{"id":"hou","name":"Houston Texans","division":"AFC South","primary":"#03202f","secondary":"#a71930","chrome":{"light":"#f0efea","dark":"#050c11"}},{"id":"ind","name":"Indianapolis Colts","division":"AFC South","primary":"#002c5f","secondary":"#a2aaad","chrome":{"light":"#efefec","dark":"#050f1c"}},{"id":"jax","name":"Jacksonville Jaguars","division":"AFC South","primary":"#006778","secondary":"#d7a22a","chrome":{"light":"#edf0ec","dark":"#051c21"}},{"id":"ten","name":"Tennessee Titans","division":"AFC South","primary":"#0c2340","secondary":"#4b92db","chrome":{"light":"#f0efeb","dark":"#070d15"}},{"id":"den","name":"Denver Broncos","division":"AFC West","primary":"#fb4f14","secondary":"#002244","chrome":{"light":"#f8eee6","dark":"#3c170b"}},{"id":"kc","name":"Kansas City Chiefs","division":"AFC West","primary":"#e31837","secondary":"#ffb81c","chrome":{"light":"#f8ede9","dark":"#370b13"}},{"id":"lv","name":"Las Vegas Raiders","division":"AFC West","primary":"#000000","secondary":"#a5acaf","chrome":{"light":"#f1efea","dark":"#050507"}},{"id":"lac","name":"Los Angeles Chargers","division":"AFC West","primary":"#0080c6","secondary":"#ffc20e","chrome":{"light":"#ecf0ef","dark":"#052233"}},{"id":"dal","name":"Dallas Cowboys","division":"NFC East","primary":"#003594","secondary":"#869397","chrome":{"light":"#efefee","dark":"#051128"}},{"id":"nyg","name":"New York Giants","division":"NFC East","primary":"#0b2265","secondary":"#a71930","chrome":{"light":"#f0efed","dark":"#070d1d"}},{"id":"phi","name":"Philadelphia Eagles","division":"NFC East","primary":"#004c54","secondary":"#a5acaf","chrome":{"light":"#eeefea","dark":"#05161a"}},{"id":"was","name":"Washington Commanders","division":"NFC East","primary":"#5a1414","secondary":"#ffb612","chrome":{"light":"#f3eee9","dark":"#180a0b"}},{"id":"chi","name":"Chicago Bears","division":"NFC North","primary":"#0b162a","secondary":"#c83803","chrome":{"light":"#f0efea","dark":"#070a10"}},{"id":"det","name":"Detroit Lions","division":"NFC North","primary":"#0076b6","secondary":"#b0b7bc","chrome":{"light":"#ecf0ee","dark":"#051f2f"}},{"id":"gb","name":"Green Bay Packers","division":"NFC North","primary":"#203731","secondary":"#ffb612","chrome":{"light":"#f0efea","dark":"#0c1212"}},{"id":"min","name":"Minnesota Vikings","division":"NFC North","primary":"#4f2683","secondary":"#ffc62f","chrome":{"light":"#f2eeed","dark":"#160e24"}},{"id":"atl","name":"Atlanta Falcons","division":"NFC South","primary":"#a71930","secondary":"#000000","chrome":{"light":"#f6eee9","dark":"#290b12"}},{"id":"car","name":"Carolina Panthers","division":"NFC South","primary":"#0085ca","secondary":"#101820","chrome":{"light":"#ecf0ef","dark":"#052333"}},{"id":"no","name":"New Orleans Saints","division":"NFC South","primary":"#d3bc8d","secondary":"#101820","chrome":{"light":"#f6f3ec","dark":"#332f26"}},{"id":"tb","name":"Tampa Bay Buccaneers","division":"NFC South","primary":"#d50a0a","secondary":"#ff7900","chrome":{"light":"#f7ede8","dark":"#340809"}},{"id":"ari","name":"Arizona Cardinals","division":"NFC West","primary":"#97233f","secondary":"#ffb612","chrome":{"light":"#f5eeea","dark":"#260d15"}},{"id":"lar","name":"Los Angeles Rams","division":"NFC West","primary":"#003594","secondary":"#ffa300","chrome":{"light":"#efefee","dark":"#051128"}},{"id":"sf","name":"San Francisco 49ers","division":"NFC West","primary":"#aa0000","secondary":"#b3995d","chrome":{"light":"#f6ede8","dark":"#2a0507"}},{"id":"sea","name":"Seattle Seahawks","division":"NFC West","primary":"#002244","secondary":"#69be28","chrome":{"light":"#f0efeb","dark":"#050d16"}}];
+  var found = null;
+  for (var i = 0; i < THEMES.length; i++) if (THEMES[i].id === team) found = THEMES[i];
+  if (!found) { team = 'ml'; found = THEMES[0]; }
+  var sysDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  var mode = appearance === 'system' ? (sysDark ? 'dark' : 'light') : appearance;
+  var root = document.documentElement;
+  root.setAttribute('data-theme', mode);
+  root.setAttribute('data-appearance', appearance);
+  root.setAttribute('data-team', team);
+  var meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute('content', found.chrome[mode]);
+  window.MLThemes = THEMES;
+  window.MLThemeBoot = { appearance: appearance, team: team, mode: mode };
+})();
+</script>
+<link rel="stylesheet" href="styles.css?v=e688d5596b" />
+<link rel="stylesheet" href="themes.css?v=e688d5596b" />
 </head>
 <body>
 <div class="app">
@@ -46,9 +72,8 @@
           <button type="button" role="radio" data-val="std" aria-checked="false">Std</button>
         </div>
       </div>
-      <button id="themeToggle" class="icon-btn" type="button" aria-label="Toggle dark mode">
-        <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
-        <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+      <button id="settingsBtn" class="icon-btn" type="button" aria-label="Settings" aria-haspopup="dialog" aria-controls="settingsDialog" aria-expanded="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9c.3.6.9 1 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
       </button>
     </div>
   </header>
@@ -229,13 +254,40 @@
   </main>
 </div>
 
-<script>window.ML_VER="27aae587f7";</script>
-<script src="chart.umd.min.js?v=27aae587f7"></script>
-<script src="lineup.js?v=27aae587f7"></script>
-<script src="team.js?v=27aae587f7"></script>
-<script src="glossary.js?v=27aae587f7"></script>
-<script src="model.js?v=27aae587f7"></script>
-<script src="app.js?v=27aae587f7"></script>
+<div id="settingsDialog" class="settings-root" role="dialog" aria-modal="true" aria-labelledby="settingsTitle" hidden>
+  <div class="settings-backdrop" data-settings-close></div>
+  <div class="settings-panel">
+    <div class="settings-head">
+      <h2 id="settingsTitle">Settings</h2>
+      <button type="button" class="icon-btn" data-settings-close aria-label="Close settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <div class="settings-body">
+      <div class="settings-block">
+        <h3 id="appearLabel">Appearance</h3>
+        <div class="segmented" id="appearSeg" role="radiogroup" aria-labelledby="appearLabel">
+          <button type="button" role="radio" data-appearance="light" aria-checked="false">Light</button>
+          <button type="button" role="radio" data-appearance="dark" aria-checked="false">Dark</button>
+          <button type="button" role="radio" data-appearance="system" aria-checked="true">System</button>
+        </div>
+      </div>
+      <div class="settings-block">
+        <label class="settings-label" for="themeSearch">Theme</label>
+        <input id="themeSearch" type="search" placeholder="Search teams" autocomplete="off" />
+        <div id="themeList" class="theme-list"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>window.ML_VER="e688d5596b";</script>
+<script src="chart.umd.min.js?v=e688d5596b"></script>
+<script src="lineup.js?v=e688d5596b"></script>
+<script src="team.js?v=e688d5596b"></script>
+<script src="glossary.js?v=e688d5596b"></script>
+<script src="model.js?v=e688d5596b"></script>
+<script src="app.js?v=e688d5596b"></script>
 <script>
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
 </script>

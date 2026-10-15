@@ -3,7 +3,7 @@
   'use strict';
 
   // ---------- State ----------
-  const state = { data: null, week: null, scoring: 'ppr', pos: 'ALL', liveInj: null, view: 'board', player: null, theme: null, news: null, newsByPlayer: {}, newsFilter: 'all', defSort: { key: 'fp_RB', dir: 1 } };
+  const state = { data: null, week: null, scoring: 'ppr', pos: 'ALL', liveInj: null, view: 'board', player: null, theme: null, appearance: 'system', team: 'ml', news: null, newsByPlayer: {}, newsFilter: 'all', defSort: { key: 'fp_RB', dir: 1 } };
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 
@@ -15,21 +15,118 @@
   function propMean(o, yards) { return window.MLModel.propMean(o, yards); }
 
   // ---------- Theme ----------
-  function initTheme() {
-    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    state.theme = prefersDark ? 'dark' : 'light';
-    document.documentElement.setAttribute('data-theme', state.theme);
-    applyChromeColor();
-    $('#themeToggle').addEventListener('click', () => {
-      state.theme = state.theme === 'dark' ? 'light' : 'dark';
-      document.documentElement.setAttribute('data-theme', state.theme);
-      applyChromeColor();
-      if (state.view === 'player' && state.player) renderPlayer(state.player);
-    });
+  const APPEAR_KEY = 'ml-appearance';
+  const TEAM_KEY = 'ml-team';
+  let settingsReturn = null;
+
+  function themeRecord(id) {
+    const list = window.MLThemes || [];
+    return list.find(t => t.id === id) || list[0] || null;
   }
-  function applyChromeColor() {
+  function resolvedMode(appearance) {
+    if (appearance === 'dark' || appearance === 'light') return appearance;
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+  function applyTheme() {
+    const mode = resolvedMode(state.appearance);
+    state.theme = mode;
+    const root = document.documentElement;
+    root.setAttribute('data-theme', mode);
+    root.setAttribute('data-appearance', state.appearance);
+    root.setAttribute('data-team', state.team);
+    try { localStorage.setItem(APPEAR_KEY, state.appearance); localStorage.setItem(TEAM_KEY, state.team); } catch (e) {}
+    const rec = themeRecord(state.team);
     const meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute('content', state.theme === 'dark' ? '#04140d' : '#0a2e1d');
+    if (meta && rec && rec.chrome && rec.chrome[mode]) meta.setAttribute('content', rec.chrome[mode]);
+    syncSettingsUI();
+    if (state.view === 'player' && state.player) renderPlayer(state.player);
+  }
+  function setAppearance(value) {
+    if (value !== 'light' && value !== 'dark' && value !== 'system') return;
+    state.appearance = value;
+    applyTheme();
+  }
+  function setTeam(id) {
+    if (!themeRecord(id) || themeRecord(id).id !== id) return;
+    state.team = id;
+    applyTheme();
+  }
+  function syncSettingsUI() {
+    $$('#appearSeg [data-appearance]').forEach(b => b.setAttribute('aria-checked', b.dataset.appearance === state.appearance ? 'true' : 'false'));
+    $$('#themeList .theme-pick').forEach(b => b.setAttribute('aria-pressed', b.dataset.team === state.team ? 'true' : 'false'));
+  }
+  function renderThemeList() {
+    const host = $('#themeList');
+    if (!host || !window.MLThemes) return;
+    const q = (($('#themeSearch') && $('#themeSearch').value) || '').trim().toLowerCase();
+    const themes = window.MLThemes.filter(t => !q || t.name.toLowerCase().includes(q) || (t.division || '').toLowerCase().includes(q));
+    const order = [];
+    const by = new Map();
+    themes.forEach(t => {
+      const g = t.id === 'ml' ? 'Default' : (t.division || 'Teams');
+      if (!by.has(g)) { by.set(g, []); order.push(g); }
+      by.get(g).push(t);
+    });
+    host.innerHTML = order.length ? order.map(g => `<div class="theme-group"><div class="theme-div">${esc(g)}</div>${by.get(g).map(t => `<button type="button" class="theme-pick" data-team="${esc(t.id)}" aria-pressed="${t.id === state.team ? 'true' : 'false'}"><span class="swatch" aria-hidden="true"><i style="background:${esc(t.primary)}"></i><i style="background:${esc(t.secondary)}"></i></span><span class="theme-name">${esc(t.name)}</span></button>`).join('')}</div>`).join('') : '<p class="sub">No teams match that search.</p>';
+    host.querySelectorAll('.theme-pick').forEach(b => b.addEventListener('click', () => setTeam(b.dataset.team)));
+  }
+  function settingsItems() {
+    const dialog = $('#settingsDialog');
+    if (!dialog) return [];
+    return [...dialog.querySelectorAll('button, input, [href], [tabindex]:not([tabindex="-1"])')].filter(el => !el.disabled && !el.closest('[hidden]') && el.offsetParent !== null);
+  }
+  function openSettings() {
+    const dialog = $('#settingsDialog');
+    if (!dialog || !dialog.hidden) return;
+    settingsReturn = document.activeElement;
+    dialog.hidden = false;
+    const btn = $('#settingsBtn');
+    if (btn) btn.setAttribute('aria-expanded', 'true');
+    const app = $('.app');
+    if (app) app.setAttribute('inert', '');
+    const current = $('#appearSeg [aria-checked="true"]') || dialog.querySelector('button, input');
+    if (current) current.focus();
+  }
+  function closeSettings() {
+    const dialog = $('#settingsDialog');
+    if (!dialog || dialog.hidden) return;
+    dialog.hidden = true;
+    const btn = $('#settingsBtn');
+    if (btn) btn.setAttribute('aria-expanded', 'false');
+    const app = $('.app');
+    if (app) app.removeAttribute('inert');
+    if (settingsReturn && settingsReturn.focus) settingsReturn.focus();
+  }
+  function onSettingsKey(e) {
+    const dialog = $('#settingsDialog');
+    if (!dialog || dialog.hidden) return;
+    if (e.key === 'Escape') { e.preventDefault(); closeSettings(); return; }
+    if (e.key !== 'Tab') return;
+    const items = settingsItems();
+    if (!items.length) return;
+    const first = items[0], last = items[items.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  }
+  function initTheme() {
+    const boot = window.MLThemeBoot || {};
+    state.appearance = boot.appearance || 'system';
+    state.team = boot.team || document.documentElement.getAttribute('data-team') || 'ml';
+    state.theme = boot.mode || document.documentElement.getAttribute('data-theme') || resolvedMode(state.appearance);
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const onScheme = () => { if (state.appearance === 'system') applyTheme(); };
+    if (mq.addEventListener) mq.addEventListener('change', onScheme);
+    else if (mq.addListener) mq.addListener(onScheme);
+    const btn = $('#settingsBtn');
+    if (btn) btn.addEventListener('click', openSettings);
+    document.addEventListener('keydown', onSettingsKey);
+    const dialog = $('#settingsDialog');
+    if (dialog) dialog.addEventListener('click', e => { if (e.target.closest('[data-settings-close]')) closeSettings(); });
+    $$('#appearSeg [data-appearance]').forEach(b => b.addEventListener('click', () => setAppearance(b.dataset.appearance)));
+    const search = $('#themeSearch');
+    if (search) search.addEventListener('input', renderThemeList);
+    renderThemeList();
+    syncSettingsUI();
   }
 
   const NA = '<span class="na">Unavailable</span>';
