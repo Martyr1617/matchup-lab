@@ -61,4 +61,5 @@ fetch data/ep_2026.csv           "https://github.com/ffverse/ffopportunity/relea
 python3 build_data.py
 # News is optional. A broken feed must not fail the projection build.
 python3 fetch_news.py site/data.json site/news.json ${ML_PREV_NEWS:-} || echo "WARN: news build failed; projections are unchanged"
+node build_trade.js --backtest || echo "WARN: trade values were not rebuilt; projections are unchanged"
 python3 stamp.py

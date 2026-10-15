@@ -42,8 +42,8 @@
   window.MLThemeBoot = { appearance: appearance, team: team, mode: mode };
 })();
 </script>
-<link rel="stylesheet" href="styles.css?v=e688d5596b" />
-<link rel="stylesheet" href="themes.css?v=e688d5596b" />
+<link rel="stylesheet" href="styles.css?v=2ef920ada0" />
+<link rel="stylesheet" href="themes.css?v=2ef920ada0" />
 </head>
 <body>
 <div class="app">
@@ -83,6 +83,7 @@
     <button class="tab" data-view="team" type="button">My Team</button>
     <button class="tab" data-view="player" type="button" id="playerTab" disabled>Player</button>
     <button class="tab" data-view="compare" type="button">Compare</button>
+    <button class="tab" data-view="trade" type="button">Trade</button>
     <button class="tab" data-view="defense" type="button">Defenses</button>
     <button class="tab" data-view="news" type="button">News</button>
     <button class="tab" data-view="method" type="button">How it works</button>
@@ -138,6 +139,52 @@
     <!-- COMPARE -->
     <section class="view" id="view-compare" hidden></section>
 
+    <section class="view" id="view-trade" hidden>
+      <div class="view-head">
+        <div>
+          <h1 class="page-title">Trade Analyzer</h1>
+          <p class="sub">0–100 values are points above a 12-team replacement line. The number updates with scoring, superflex, and redraft or dynasty.</p>
+        </div>
+      </div>
+      <div class="trade-toggles">
+        <div class="segmented" id="tradeScore" role="radiogroup" aria-label="Trade scoring">
+          <button type="button" role="radio" data-val="ppr" aria-checked="true">PPR</button>
+          <button type="button" role="radio" data-val="half" aria-checked="false">Half</button>
+          <button type="button" role="radio" data-val="std" aria-checked="false">Std</button>
+        </div>
+        <div class="segmented" id="tradeQb" role="radiogroup" aria-label="Quarterback slots">
+          <button type="button" role="radio" data-val="qb1" aria-checked="true">1 QB</button>
+          <button type="button" role="radio" data-val="sflex" aria-checked="false">Superflex</button>
+        </div>
+        <div class="segmented" id="tradeHorizon" role="radiogroup" aria-label="Value horizon">
+          <button type="button" role="radio" data-val="redraft" aria-checked="true">Redraft</button>
+          <button type="button" role="radio" data-val="dynasty" aria-checked="false">Dynasty</button>
+        </div>
+        <label class="check" for="tradeAll"><input id="tradeAll" type="checkbox" /> Search all players</label>
+      </div>
+      <div class="trade-grid" id="tradeBoard">
+        <section class="trade-side" aria-labelledby="tradeALabel">
+          <h2 id="tradeALabel">Side A</h2>
+          <div class="trade-search">
+            <label class="sr-only" for="tradeSearchA">Add a player to side A</label>
+            <input id="tradeSearchA" type="search" placeholder="Add a player" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="tradeListA" aria-expanded="false" />
+            <ul id="tradeListA" class="trade-results" role="listbox" hidden></ul>
+          </div>
+          <ul class="trade-cards" id="tradeCardsA"></ul>
+        </section>
+        <section class="trade-side" aria-labelledby="tradeBLabel">
+          <h2 id="tradeBLabel">Side B</h2>
+          <div class="trade-search">
+            <label class="sr-only" for="tradeSearchB">Add a player to side B</label>
+            <input id="tradeSearchB" type="search" placeholder="Add a player" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="tradeListB" aria-expanded="false" />
+            <ul id="tradeListB" class="trade-results" role="listbox" hidden></ul>
+          </div>
+          <ul class="trade-cards" id="tradeCardsB"></ul>
+        </section>
+      </div>
+      <div id="tradeResult" class="trade-result" aria-live="polite"></div>
+    </section>
+
     <!-- DEFENSE -->
     <section class="view" id="view-defense" hidden>
       <div class="view-head">
@@ -177,6 +224,11 @@
     <section class="view" id="view-method" hidden>
       <div class="view-head"><div><h1 class="page-title">How projections work</h1><p class="sub">A transparent, usage-first model. No black box.</p></div></div>
       <div class="method-grid">
+        <article class="card">
+          <h2 class="card-title">Trade values</h2>
+          <p>Each remaining week is projected with the same model, then added up. Injury status discounts that total: IR or a suspension removes the season, Out removes one game, Doubtful 0.75, Questionable 0.25. A news headline changes the discount only when it names one of those statuses.</p>
+          <p style="margin-top:var(--space-3)">Value is points above the last starter in a 12-team league (1QB: QB12, RB30, WR36, TE12; superflex uses QB24), scaled so the biggest surplus is 100. Dynasty is 60% of that rest-of-season total and 40% of a next-season outlook from points per game, an age curve, role versus the position median, and the team's scoring versus the league. Sending extra players costs 4% per player, capped at 12%. The grade is the gap divided by the larger side: within 4% is A+, within 8% is A, 12% B, 18% C, 26% D, and wider is F.</p>
+        </article>
         <article class="card">
           <h2 class="card-title">Priority order</h2>
           <p>Every projection and start/sit call is built in this order: <b>1. Vegas and market signals</b>, <b>2. opportunity</b>, <b>3. efficiency over expected</b>, <b>4. context</b>, then box-score averages. Weekly decisions weight the recent role and this week's betting environment most heavily.</p>
@@ -281,13 +333,14 @@
   </div>
 </div>
 
-<script>window.ML_VER="e688d5596b";</script>
-<script src="chart.umd.min.js?v=e688d5596b"></script>
-<script src="lineup.js?v=e688d5596b"></script>
-<script src="team.js?v=e688d5596b"></script>
-<script src="glossary.js?v=e688d5596b"></script>
-<script src="model.js?v=e688d5596b"></script>
-<script src="app.js?v=e688d5596b"></script>
+<script>window.ML_VER="2ef920ada0";</script>
+<script src="chart.umd.min.js?v=2ef920ada0"></script>
+<script src="lineup.js?v=2ef920ada0"></script>
+<script src="team.js?v=2ef920ada0"></script>
+<script src="glossary.js?v=2ef920ada0"></script>
+<script src="model.js?v=2ef920ada0"></script>
+<script src="trade.js?v=2ef920ada0"></script>
+<script src="app.js?v=2ef920ada0"></script>
 <script>
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
 </script>
