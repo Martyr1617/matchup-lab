@@ -98,8 +98,10 @@ test('published values sit on a 0–100 scale with scarcity and injury', () => {
   const skill = data.players.filter(p => /^(QB|RB|WR|TE)$/.test(p.pos));
   assert.ok(skill.every(p => p.tv && p.tv.v && p.tv.v.ppr && p.tv.v.ppr.qb1 && p.tv.v.ppr.sflex));
   const top = skill.filter(p => p.tv.top);
-  assert.equal(top.length, 150);
-  assert.equal(data.meta.trade.top, 150);
+  assert.equal(top.length, 250);
+  assert.equal(data.meta.trade.top, 250);
+  assert.equal(trade.TOP_N, 250);
+  assert.equal(trade.ADP_FIT_N, 150);
   for (const p of skill) {
     for (const scoring of ['ppr', 'half', 'std']) {
       for (const mode of ['qb1', 'sflex']) {
@@ -111,7 +113,7 @@ test('published values sit on a 0–100 scale with scarcity and injury', () => {
   }
   const best = Math.max(...skill.map(p => p.tv.v.ppr.qb1[0]));
   assert.equal(best, 100);
-  assert.equal(data.meta.trade.v, 5);
+  assert.equal(data.meta.trade.v, 6);
   assert.equal(data.meta.trade.playoff, 1.5);
   assert.equal(data.meta.trade.slots.qb1.QB, 20);
   assert.equal(data.meta.trade.slots.sflex.QB, 32);
@@ -256,6 +258,78 @@ test('the value curve stays smooth and a better quarterback ranks higher', () =>
     assert.ok(q.tv.v.ppr.qb1[0] > 0, q.name + ' 1QB');
     assert.ok(q.tv.v.ppr.sflex[0] > q.tv.v.ppr.qb1[0], q.name + ' superflex');
   }
+});
+
+test('the deep tail of the top 250 stays ordered and off zero', () => {
+  const top = data.players.filter(p => p.tv && p.tv.top);
+  assert.equal(top.length, 250);
+  assert.ok(top.every(p => p.tv.v.ppr.qb1[0] > 0 && p.tv.v.ppr.qb1[1] > 0));
+  const rows = top.filter(p => !(p.adp && p.tv.inj)).sort((a, b) => b.tv.par.ppr.qb1[0] - a.tv.par.ppr.qb1[0] || b.tv.ros[0] - a.tv.ros[0]);
+  for (let i = 1; i < rows.length; i++) {
+    const parBetter = rows[i - 1].tv.par.ppr.qb1[0] > rows[i].tv.par.ppr.qb1[0];
+    const rosBetter = rows[i - 1].tv.ros[0] > rows[i].tv.ros[0];
+    if (!parBetter && !rosBetter) continue;
+    const av = rows[i - 1].tv.v.ppr.qb1[0];
+    const bv = rows[i].tv.v.ppr.qb1[0];
+    const tail = av < 1 && bv < 1;
+    assert.ok(tail ? av > bv : av >= bv, rows[i - 1].name + ' ' + av + ' vs ' + rows[i].name + ' ' + bv);
+  }
+  const bottom = top.slice().sort((a, b) => a.tv.v.ppr.qb1[0] - b.tv.v.ppr.qb1[0]).slice(0, 40);
+  const uniq = new Set(bottom.map(p => p.tv.v.ppr.qb1[0]));
+  assert.ok(uniq.size >= 20, 'bottom unique ' + uniq.size + ' ' + [...uniq].sort((a, b) => a - b).join(','));
+  const min = Math.min(...top.map(p => p.tv.v.ppr.qb1[0]));
+  const atMin = top.filter(p => p.tv.v.ppr.qb1[0] === min);
+  const proj = new Set(atMin.map(p => p.tv.par.ppr.qb1[0] + ':' + p.tv.ros[0]));
+  assert.equal(proj.size, 1, 'different projections tied at ' + min);
+  const starters = data.players.filter(p => p.tv && p.tv.starter);
+  assert.ok(starters.some(p => !p.tv.top), 'a starter can sit outside the top 250');
+  assert.ok(starters.every(p => p.tv.v.ppr.qb1[0] > 0));
+  const outside = starters.filter(p => !p.tv.top);
+  assert.ok(outside.every(p => /^(QB|RB|WR|TE)$/.test(p.pos)));
+});
+
+test('suggestion tiers still name roles inside the top 250', () => {
+  const pool = data.players.filter(p => p.tv && p.tv.top).map(p => ({
+    id: p.id, name: p.name, pos: p.pos, value: p.tv.v.ppr.qb1[0], inj: '',
+  }));
+  assert.equal(pool.length, 250);
+  const byPos = {};
+  for (const p of pool) (byPos[p.pos] = byPos[p.pos] || []).push(p);
+  for (const pos of ['QB', 'RB', 'WR', 'TE']) byPos[pos].sort((a, b) => b.value - a.value);
+  assert.equal(trade.tierOf('RB', byPos.RB.findIndex(p => p.id === byPos.RB[13].id) + 1), 'RB2');
+  assert.equal(trade.tierOf('WR', 30), 'WR3');
+  assert.ok(byPos.RB.length > 36 && byPos.WR.length > 36);
+  const ranked = pool.slice().sort((a, b) => b.value - a.value);
+  let hit = null;
+  for (const a of ranked) {
+    if (a.value < 20 || a.value > 40) continue;
+    for (const b of ranked) {
+      if (b.id === a.id || b.value >= a.value || b.value < a.value * 0.55) continue;
+      const lop = trade.fairer([a], [b], pool);
+      const adds = lop.suggestions.filter(s => s.kind === 'add' && /\b(RB2|WR3)\b/.test(s.text));
+      if (!adds.length) continue;
+      hit = adds;
+      assert.ok(adds.every(s => s.examples.length && s.examples.every(ex => pool.some(p => p.id === ex.id))));
+      break;
+    }
+    if (hit) break;
+  }
+  assert.ok(hit, 'a modest gap in the top 250 still suggests an RB2 or a WR3');
+});
+
+test('an older trade file widens to the top 250 without rebuilding', () => {
+  const copy = JSON.parse(JSON.stringify(data));
+  copy.meta.trade.v = 5;
+  copy.meta.trade.top = 150;
+  const ranked = copy.players.filter(p => p.tv).sort((a, b) => Math.max(b.tv.v.ppr.qb1[0], b.tv.v.ppr.qb1[1]) - Math.max(a.tv.v.ppr.qb1[0], a.tv.v.ppr.qb1[1]));
+  ranked.forEach((p, i) => { p.tv.top = i < 150; });
+  const before = copy.players.find(p => p.name === 'Puka Nacua').tv.v.ppr.qb1[0];
+  trade.ensure(copy);
+  assert.equal(copy.meta.trade.v, 6);
+  assert.equal(copy.meta.trade.top, 250);
+  assert.equal(copy.players.filter(p => p.tv && p.tv.top).length, 250);
+  assert.equal(copy.players.find(p => p.name === 'Puka Nacua').tv.v.ppr.qb1[0], before);
+  assert.equal(trade.ensure(copy), copy);
 });
 
 test('starters and injured stars stay searchable', () => {
