@@ -167,7 +167,7 @@
     rows.push(['Red-zone share (in 20 / in 10)', A.rz20_share != null ? `${pct(A.rz20_share)} / ${pv(A.rz10_share)}` : NA], eff,
       ['xFP / g · FPOE / g', A.xfp_pg != null ? `${f1(A.xfp_pg)} · ${sgn(A.fpoe_pg, f1)}` : NA],
       ['Projection', f1(pr.pts)], ['Market-implied pts', pr.mktPts != null ? f1(pr.mktPts) : '<span class="na">No props</span>'],
-      ['Floor–Ceiling', `<span class="range"><span class="fl">${f1(pr.dist.quantile(0.1))}</span><span class="rg-sep">–</span><span class="cl">${f1(pr.dist.quantile(0.9))}</span></span>`], ['Boom · bust', `${pct(pr.bb.boom)} · ${pct(pr.bb.bust)}`]);
+      ['Floor–Ceiling', `<span class="range"><span class="fl">${f1(pr.floor)}</span><span class="rg-sep">–</span><span class="cl">${f1(pr.ceil)}</span></span>`], ['Boom · bust', `${pct(pr.bb.boom)} · ${pct(pr.bb.bust)}`]);
     return rows;
   }
   function gameScriptNote(pl, vg) {
@@ -627,7 +627,7 @@
         ${pr.bye ? '' : `<div class="proj-hero">
           <div class="lbl">Week ${state.week} projection · ${S.name}</div>
           <div class="big">${f1(pr.pts)}</div>
-          <div class="rng"><span class="band floor">Floor <b>${f1(pr.floor)}</b></span><span class="band ceil">Ceiling <b>${f1(pr.ceil)}</b></span><span class="rng-meta">Boom ${pct(pr.bb.boom)} · Bust ${pct(pr.bb.bust)}${pr.mktPts != null ? ` · Market ${f1(pr.mktPts)}` : ''} &nbsp;|&nbsp; ${pr.home ? 'vs' : '@'} ${esc(tn(pr.opp))} · ${fmtKick(pr.game)}</span></div>
+          <div class="rng"><span class="band floor"><span data-gl="Floor">Floor</span> <b>${f1(pr.floor)}</b></span><span class="band ceil">Ceiling <b>${f1(pr.ceil)}</b></span><span class="rng-meta">Boom ${pct(pr.bb.boom)} · Bust ${pct(pr.bb.bust)}${pr.mktPts != null ? ` · Market ${f1(pr.mktPts)}` : ''} &nbsp;|&nbsp; ${pr.home ? 'vs' : '@'} ${esc(tn(pr.opp))} · ${fmtKick(pr.game)}</span></div>
           ${weatherText(pr.game) ? `<div class="rng wx-line">Weather: ${esc(weatherText(pr.game))}${pr.wx && pr.wx.tags.length ? ` — ${esc(pr.wx.tags.join(', '))}, projection ${pr.wxDelta < 0 ? 'lowered' : 'raised'} ${f1(Math.abs(pr.wxDelta))} pts` : ''}</div>` : ''}
         </div>`}
       </div>`;
@@ -649,7 +649,8 @@
     const pctLabel = { 0.1: 'Floor', 0.25: 'P25', 0.5: 'P50', 0.75: 'P75', 0.9: 'Ceiling' };
     const pcts = [0.1, 0.25, 0.5, 0.75, 0.9].map(p => {
       const cls = p === 0.1 ? ' floor' : p === 0.9 ? ' ceil' : p === 0.5 ? ' mid' : '';
-      return `<div class="pct${cls}"><div class="k">${pctLabel[p]}</div><div class="v">${f1(d.quantile(p))}</div></div>`;
+      const v = p === 0.1 ? pr.floor : d.quantile(p);
+      return `<div class="pct${cls}"><div class="k">${pctLabel[p]}</div><div class="v">${f1(v)}</div></div>`;
     }).join('');
     const ths = [10, 15, 20, 25, 30].map(x => { const p = d.pOver(x); return `<div class="th-row"><span>≥ ${x} pts</span><div class="bar"><i style="width:${Math.round(p * 100)}%"></i></div><span class="v">${pct(p)}</span></div>`; }).join('');
 
@@ -764,7 +765,7 @@
       + mrow('Opp pressure rate', op.pressure_generated != null ? pct(op.pressure_generated) + rk(op.pressure_generated_rk, 'most') : NA, `${esc(pr.opp)} pass rush`);
     if (pl.pos === 'QB') c += mrow('Time to throw', A.ttt != null ? f2(A.ttt) + 's' : NA, 'NGS') + mrow('Pressured rate', pv(A.pressured_rate), 'his dropbacks');
     const d = pr.dist;
-    c += mrow('Floor / Median / Ceiling', `<span class="fl">${f1(d.quantile(0.1))}</span> / ${f1(d.quantile(0.5))} / <span class="cl">${f1(d.quantile(0.9))}</span>`, '') + mrow('Boom / bust', `<span class="boom">${pct(pr.bb.boom)}</span> / <span class="bust">${pct(pr.bb.bust)}</span>`, `≥${pr.bb.boomAt} / <${pr.bb.bustAt} pts`);
+    c += mrow('Floor / Median / Ceiling', `<span class="fl">${f1(pr.floor)}</span> / ${f1(d.quantile(0.5))} / <span class="cl">${f1(pr.ceil)}</span>`, '') + mrow('Boom / bust', `<span class="boom">${pct(pr.bb.boom)}</span> / <span class="bust">${pct(pr.bb.bust)}</span>`, `≥${pr.bb.boomAt} / <${pr.bb.bustAt} pts`);
     const card4 = `<div class="card layer"><div class="card-title"><span class="lnum">4</span>Context &amp; distribution</div><div class="metrics">${c}</div></div>`;
     return `<div class="grid-2 layers">${card1}${card2}${card3}${card4}</div>`;
   }
@@ -814,7 +815,7 @@
     const muted = css.getPropertyValue('--color-text-muted').trim(), grid = css.getPropertyValue('--color-divider').trim();
     const floorC = css.getPropertyValue('--chart-floor').trim(), ceilC = css.getPropertyValue('--chart-ceil').trim(), meanC = css.getPropertyValue('--chart-mean').trim();
     const tipBg = css.getPropertyValue('--color-field-deep').trim();
-    const p20 = d.quantile(0.1), p80 = d.quantile(0.9), mean = d.mean;
+    const p20 = pr.floor, p80 = pr.ceil, mean = d.mean;
     const markers = {
       id: 'markers',
       afterDatasetsDraw(c) {
