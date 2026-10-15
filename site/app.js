@@ -416,6 +416,7 @@
     const lc = state.data.meta.last_completed_week;
     const rows = [];
     for (const pl of state.data.players) {
+      if (pl.tradeOnly) continue;
       if (pos !== 'ALL' && pl.pos !== pos) continue;
       if (isOut(pl)) continue;
       const pr = project(pl, week, scoring);
@@ -903,7 +904,7 @@
       const q = norm(input.value.trim());
       if (q.length < 2) { close(); return; }
       const toks = q.split(/\s+/);
-      items = state.data.players.filter(p => { const n = norm(p.name); return toks.every(t => n.includes(t)); })
+      items = state.data.players.filter(p => { if (p.tradeOnly) return false; const n = norm(p.name); return toks.every(t => n.includes(t)); })
         .sort((a, b) => (norm(b.name).startsWith(q) - norm(a.name).startsWith(q)) || (b.ppr_pg - a.ppr_pg)).slice(0, 8);
       active = items.length ? 0 : -1; render();
     });
@@ -926,7 +927,7 @@
     input.addEventListener('input', () => {
       const q = nm(input.value.trim()); if (q.length < 2) { list.hidden = true; return; }
       const toks = q.split(/\s+/);
-      items = state.data.players.filter(p => toks.every(t => nm(p.name).includes(t))).sort((a, b) => b.ppr_pg - a.ppr_pg).slice(0, 6);
+      items = state.data.players.filter(p => !p.tradeOnly && toks.every(t => nm(p.name).includes(t))).sort((a, b) => b.ppr_pg - a.ppr_pg).slice(0, 6);
       list.innerHTML = items.length ? items.map(p => `<li data-id="${esc(p.id)}"><span class="pos ${p.pos}">${p.pos}</span> ${esc(p.name)} <span class="meta">${esc(p.team)}</span></li>`).join('') : '<li class="empty">No match</li>';
       list.hidden = false;
       $$('li[data-id]', list).forEach(li => li.addEventListener('mousedown', e => { e.preventDefault(); list.hidden = true; input.value = ''; onPick(li.dataset.id); }));
