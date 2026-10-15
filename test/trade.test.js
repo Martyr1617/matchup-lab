@@ -111,12 +111,13 @@ test('published values sit on a 0–100 scale with scarcity and injury', () => {
   }
   const best = Math.max(...skill.map(p => p.tv.v.ppr.qb1[0]));
   assert.equal(best, 100);
-  assert.equal(data.meta.trade.v, 3);
+  assert.equal(data.meta.trade.v, 4);
   assert.equal(data.meta.trade.slots.qb1.QB, 20);
   assert.equal(data.meta.trade.slots.sflex.QB, 32);
-  const below = skill.filter(p => p.tv.par.ppr.qb1[0] <= 0);
+  const priced = p => p.adp && p.tv.inj;
+  const below = skill.filter(p => p.tv.par.ppr.qb1[0] <= 0 && !priced(p));
   assert.ok(below.length > 0);
-  const above = skill.filter(p => p.tv.par.ppr.qb1[0] > 0);
+  const above = skill.filter(p => p.tv.par.ppr.qb1[0] > 0 && !priced(p));
   const worstAbove = Math.min(...above.map(p => p.tv.v.ppr.qb1[0]));
   assert.ok(below.every(p => p.tv.v.ppr.qb1[0] <= worstAbove));
 
@@ -203,7 +204,7 @@ test('the value curve stays smooth and a better quarterback ranks higher', () =>
   for (const mode of ['qb1', 'sflex']) {
     for (const hi of [0, 1]) {
       for (const pos of ['QB', 'RB', 'WR', 'TE']) {
-        const rows = skill.filter(p => p.pos === pos).sort((a, b) => b.tv.par.ppr[mode][hi] - a.tv.par.ppr[mode][hi]);
+        const rows = skill.filter(p => p.pos === pos && !(p.adp && p.tv.inj)).sort((a, b) => b.tv.par.ppr[mode][hi] - a.tv.par.ppr[mode][hi]);
         for (let i = 1; i < rows.length; i++) {
           if (rows[i - 1].tv.par.ppr[mode][hi] <= rows[i].tv.par.ppr[mode][hi]) continue;
           assert.ok(rows[i - 1].tv.v.ppr[mode][hi] >= rows[i].tv.v.ppr[mode][hi], rows[i].name + ' outranks a better ' + pos);
@@ -305,6 +306,50 @@ test('make it fairer names a role on the side that is behind', () => {
   const full = trade.fairer(a, [1, 2, 3, 4, 5].map(i => ({ id: 'b' + i, name: 'B' + i, pos: 'RB', value: 8 })), pool);
   assert.equal(full.suggestions.filter(s => s.kind === 'add').length, 0);
   assert.match(full.note, /5 players/);
+});
+
+test('ADP can raise a hurt player and cannot cut or pass a healthy baseline', () => {
+  assert.deepEqual(trade.ADP_WEIGHT.healthy, [0.05, 0.15]);
+  assert.deepEqual(trade.ADP_WEIGHT.hurt, [0.30, 0.35]);
+  assert.equal(trade.blendValue(14.5, 21.8, 21.4, 0.30), 16.6);
+  assert.equal(trade.blendValue(14.5, 21.8, 5, 0.30), 14.5);
+  assert.equal(trade.blendValue(14.5, 16, 40, 0.5), 16);
+  assert.equal(trade.blendValue(100, 100, 30, 0.05), 100);
+
+  const points = [];
+  for (let i = 1; i <= 80; i++) points.push({ adp: i, value: Math.max(1, 90 - i), hurt: false });
+  const curve = trade.fitAdpCurve(points);
+  assert.ok(curve);
+  assert.ok(curve(5) > curve(40), curve(5) + ' vs ' + curve(40));
+  assert.ok(curve(40) >= curve(70));
+
+  const brown = data.players.find(p => p.name === 'A.J. Brown');
+  const achane = data.players.find(p => p.name === "De'Von Achane");
+  const puka = data.players.find(p => p.name === 'Puka Nacua');
+  if (brown && brown.adp) {
+    assert.ok(brown.adp < 80, 'adp ' + brown.adp);
+    assert.ok(brown.tv.v.ppr.qb1[0] > 14.5);
+    assert.ok(brown.tv.v.ppr.qb1[0] <= brown.tv.pre.ppr.qb1[0]);
+    assert.ok(brown.tv.v.ppr.qb1[1] <= brown.tv.pre.ppr.qb1[1]);
+  }
+  if (achane && achane.adp) {
+    assert.ok(achane.tv.v.ppr.qb1[0] > 0);
+    assert.ok(achane.tv.v.ppr.qb1[0] < 12);
+    assert.ok(achane.tv.v.ppr.qb1[0] <= achane.tv.pre.ppr.qb1[0]);
+  }
+  if (puka) assert.equal(puka.tv.v.ppr.qb1[0], 100);
+  for (const p of data.players) {
+    if (!p.tv || !(p.adp > 0)) continue;
+    for (const scoring of ['ppr', 'half', 'std']) {
+      for (const mode of ['qb1', 'sflex']) {
+        for (let hi = 0; hi < 2; hi++) {
+          const v = p.tv.v[scoring][mode][hi];
+          const pre = p.tv.pre[scoring][mode][hi];
+          assert.ok(v <= pre + 0.05, p.name + ' ' + v + ' above healthy ' + pre);
+        }
+      }
+    }
+  }
 });
 
 test('the trade tab, prefs, and cache name the new script', () => {

@@ -62,6 +62,14 @@
    Grades use the gap as a share of the larger side:
      ≤4% A+ fair, ≤8% A fair, ≤12% B slight edge,
      ≤18% C clear winner, ≤26% D lopsided, else F lopsided.
+
+   ADP is a season-to-date average draft position, mostly from preseason
+   drafts, so it is not an in-season trade price. A curve fit on healthy
+   players in the top 150 of that ADP maps the draft slot onto this 0–100
+   scale, separately for each scoring, quarterback format, and horizon.
+   The blend is 5% redraft / 15% dynasty for a healthy player and 30% / 35%
+   when missed games have already cut the projection. It only moves a value
+   up, and it never goes above that player's healthy-baseline value.
 */
 (function (root, factory) {
   const api = factory();
@@ -83,6 +91,9 @@
   const TOP_N = 150;
   const CURVE_T = 20;
   const SEASON_WEEKS = 17;
+  // [redraft, dynasty]. Healthy players already sit on the healthy baseline,
+  // so the smaller weight usually does not move them.
+  const ADP_WEIGHT = { healthy: [0.05, 0.15], hurt: [0.30, 0.35] };
 
   const AGE_CURVE = {
     QB: { start: 24, peak0: 28, peak1: 33, cliff: 38 },
@@ -92,6 +103,91 @@
   };
 
   function round1(n) { return Math.round(n * 10) / 10; }
+
+  // Monotone curve from ADP (1 is the top pick) to value, fit on healthy
+  // players. Bins of about a dozen picks, median value, pooled so a later
+  // pick is never worth more than an earlier one.
+  function fitAdpCurve(points) {
+    const rows = (points || []).filter(p => p && p.adp > 0 && p.value >= 0 && !p.hurt)
+      .sort((a, b) => a.adp - b.adp)
+      .slice(0, TOP_N);
+    if (rows.length < 40) return null;
+    const size = Math.max(8, Math.round(rows.length / 12));
+    const bins = [];
+    for (let i = 0; i < rows.length; i += size) {
+      const chunk = rows.slice(i, i + size);
+      if (chunk.length < 4) continue;
+      const adp = chunk.reduce((s, p) => s + p.adp, 0) / chunk.length;
+      const vals = chunk.map(p => p.value).sort((a, b) => a - b);
+      bins.push([adp, vals[Math.floor((vals.length - 1) / 2)], chunk.length]);
+    }
+    if (bins.length < 4) return null;
+    const pool = [];
+    for (const bin of bins) {
+      pool.push(bin.slice());
+      while (pool.length >= 2 && pool[pool.length - 2][1] < pool[pool.length - 1][1]) {
+        const left = pool[pool.length - 2];
+        const right = pool[pool.length - 1];
+        const w = left[2] + right[2];
+        pool[pool.length - 2] = [(left[0] * left[2] + right[0] * right[2]) / w, (left[1] * left[2] + right[1] * right[2]) / w, w];
+        pool.pop();
+      }
+    }
+    return function (adp) {
+      if (adp <= pool[0][0]) return pool[0][1];
+      if (adp >= pool[pool.length - 1][0]) return pool[pool.length - 1][1];
+      for (let i = 1; i < pool.length; i++) {
+        if (adp <= pool[i][0]) {
+          const span = Math.log(pool[i][0]) - Math.log(pool[i - 1][0]);
+          const t = span ? (Math.log(adp) - Math.log(pool[i - 1][0])) / span : 0;
+          return pool[i - 1][1] + t * (pool[i][1] - pool[i - 1][1]);
+        }
+      }
+      return pool[pool.length - 1][1];
+    };
+  }
+
+  function adpRank(pl, mode) {
+    if (mode === 'sflex' && pl.adp_sf > 0) return pl.adp_sf;
+    return pl.adp > 0 ? pl.adp : 0;
+  }
+
+  // Move toward the draft-slot value only when that slot is worth more, and
+  // stop at the healthy baseline. A worse ADP does not cut the projection.
+  function blendValue(value, healthy, slot, weight) {
+    const cap = Math.max(value, healthy);
+    const mixed = (1 - weight) * value + weight * slot;
+    return round1(Math.min(cap, Math.max(value, mixed)));
+  }
+
+  function blendAdp(players) {
+    const curves = {};
+    for (const key of SCORINGS) {
+      curves[key] = {};
+      for (const mode of QB_MODES) {
+        curves[key][mode] = [0, 1].map(hi => fitAdpCurve((players || []).filter(p => p && p.tv).map(p => ({
+          adp: adpRank(p, mode),
+          value: p.tv.v[key][mode][hi],
+          hurt: !!(p.tv && p.tv.inj),
+        }))));
+      }
+    }
+    for (const pl of players || []) {
+      if (!pl || !pl.tv || !pl.tv.v) continue;
+      for (const key of SCORINGS) {
+        for (const mode of QB_MODES) {
+          const rank = adpRank(pl, mode);
+          for (let hi = 0; hi < 2; hi++) {
+            const curve = curves[key][mode][hi];
+            if (!curve || !rank) continue;
+            const w = (pl.tv.inj ? ADP_WEIGHT.hurt : ADP_WEIGHT.healthy)[hi];
+            pl.tv.v[key][mode][hi] = blendValue(pl.tv.v[key][mode][hi], pl.tv.pre[key][mode][hi], curve(rank), w);
+          }
+        }
+      }
+    }
+    return players;
+  }
   function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
   function num(v) { return Number(v) || 0; }
 
@@ -512,6 +608,8 @@
       };
     }
 
+    blendAdp(players);
+
     const rankScore = pl => Math.max(pl.tv.v.ppr.qb1[0], pl.tv.v.ppr.qb1[1]);
     const ranked = players.slice().sort((a, b) => (rankScore(b) - rankScore(a)) || (b.tv.ros[0] - a.tv.ros[0]));
     ranked.forEach((pl, i) => { pl.tv.top = i < TOP_N; });
@@ -524,13 +622,14 @@
       }
     }
     data.meta.trade = {
-      v: 3,
+      v: 4,
       top: TOP_N,
       slots: SLOTS,
       curve: { t: CURVE_T },
       dynasty: [DYNASTY_ROS, DYNASTY_NEXT],
       consolidation: CONSOLIDATION,
       cap: CONSOLIDATION_CAP,
+      adp: ADP_WEIGHT,
       max: maxOut,
       repl,
     };
@@ -964,7 +1063,9 @@
         const tag = injLabel(row.pl);
         const pre = preValue(row.pl);
         const was = pre != null && pre - row.value >= 0.5 ? `<span class="trade-pre">${pre.toFixed(1)} if healthy</span>` : '';
-        return `<li class="trade-card"><div><div class="trade-name">${esc(row.name)} <span class="pos ${esc(row.pos)}">${esc(row.pos)}</span> <span class="meta">${esc(row.team)}</span></div>${tag ? `<div class="trade-inj">${esc(tag)}</div>` : ''}<div class="trade-meta"><b class="trade-val">${row.value.toFixed(1)}</b> value${was ? ' · ' + was : ''} · ${range}</div></div><button type="button" class="trade-x" data-side="${side}" data-id="${esc(row.id)}" aria-label="Remove ${esc(row.name)} from side ${side.toUpperCase()}">×</button></li>`;
+        const adpNum = tradeState.qb === 'sflex' && row.pl.adp_sf > 0 ? row.pl.adp_sf : row.pl.adp;
+        const adp = adpNum > 0 ? ` · <span class="trade-adp" title="Season-to-date average draft position. Most of it comes from preseason drafts, so it is not a live trade price.">ADP ${Number(adpNum).toFixed(1)}</span>` : '';
+        return `<li class="trade-card"><div><div class="trade-name">${esc(row.name)} <span class="pos ${esc(row.pos)}">${esc(row.pos)}</span> <span class="meta">${esc(row.team)}</span></div>${tag ? `<div class="trade-inj">${esc(tag)}</div>` : ''}<div class="trade-meta"><b class="trade-val">${row.value.toFixed(1)}</b> value${adp}${was ? ' · ' + was : ''} · ${range}</div></div><button type="button" class="trade-x" data-side="${side}" data-id="${esc(row.id)}" aria-label="Remove ${esc(row.name)} from side ${side.toUpperCase()}">×</button></li>`;
       }).join('') || '<li class="trade-empty">No players yet.</li>';
       host.querySelectorAll('.trade-x').forEach(btn => btn.addEventListener('click', () => {
         tradeState[btn.dataset.side] = tradeState[btn.dataset.side].filter(id => id !== btn.dataset.id);
@@ -1098,6 +1199,7 @@
     missFromText, statusMiss, newsMiss, combineMiss, availability, ageFactor, roleFactor, teamFactor, pointsOf,
     gamesBasis, gameEq, parseNews, injuryPlan, sumOutlook, IR_MIN, LONG_DYNASTY,
     ageFromBirth, spearman, adjustSide, gradeGap, analyze, fairer, tierOf, valueOf, attachTrade, backtest, round1,
+    fitAdpCurve, blendValue, blendAdp, ADP_WEIGHT,
     ensure, init, render: renderTrade,
   };
 });

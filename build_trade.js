@@ -274,6 +274,45 @@ function markStarters(data, sl) {
   console.log('starters', players.filter(p => p.starter).length);
 }
 
+function applyAdp(data) {
+  const file = path.join(__dirname, 'data', 'adp.json');
+  if (!fs.existsSync(file)) {
+    console.log('WARN: no ADP file; trade values stay on the projection');
+    return;
+  }
+  let doc;
+  try { doc = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) {
+    console.log('WARN: ADP file unreadable; trade values stay on the projection');
+    return;
+  }
+  const byEspn = new Map();
+  const byName = new Map();
+  for (const row of doc.players || []) {
+    if (!row || !(row.adp > 0)) continue;
+    if (row.espn) byEspn.set(String(row.espn), row);
+    const key = foldName(row.name) + '|' + row.pos;
+    if (!byName.has(key)) byName.set(key, row);
+    else byName.set(key, null);
+  }
+  let n = 0, nsf = 0;
+  for (const pl of data.players || []) {
+    const eid = pl.ids && pl.ids.espn != null ? String(pl.ids.espn) : '';
+    let row = eid && byEspn.get(eid);
+    if (!row) row = byName.get(foldName(pl.name) + '|' + pl.pos);
+    if (!row || !(row.adp > 0)) continue;
+    pl.adp = Math.round(row.adp * 10) / 10;
+    if (row.sf > 0) { pl.adp_sf = Math.round(row.sf * 10) / 10; nsf += 1; }
+    n += 1;
+  }
+  data.meta = data.meta || {};
+  data.meta.adp_source = doc.source || 'ESPN';
+  data.meta.adp_date = doc.date || '';
+  data.meta.adp_sf_source = doc.sf_source || '';
+  data.meta.adp_sf_date = doc.sf_date || '';
+  data.meta.adp_note = doc.note || '';
+  console.log('adp joined', n, 'sf', nsf, doc.date || '');
+}
+
 function main() {
   const arg = process.argv.find(a => a.endsWith('.json'));
   const file = arg || path.join(__dirname, 'site', 'data.json');
@@ -290,6 +329,7 @@ function main() {
   }
   overlayInjuries(data, sl);
   addMissing(data, sl, baselines, recent);
+  applyAdp(data);
   markStarters(data, sl);
   const newsById = loadNewsById(data.players);
   const t0 = Date.now();

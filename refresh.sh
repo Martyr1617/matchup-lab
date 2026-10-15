@@ -46,6 +46,9 @@ fetch data/injuries_2026.csv     "$B/injuries/injuries_2026.csv"
 fetch data/depth_2026.csv        "$B/depth_charts/depth_charts_2026.csv" 0
 fetch data/games.csv             "https://github.com/nflverse/nfldata/raw/master/data/games.csv"
 fetch data/sleeper_players.json  "https://api.sleeper.app/v1/players/nfl"
+# ADP is optional. A broken feed keeps the previous file, and the trade build
+# skips the blend when the file is missing.
+python3 fetch_adp.py || echo "WARN: ADP was not refreshed"
 fetch data/db_playerids.csv      "https://github.com/dynastyprocess/data/raw/master/files/db_playerids.csv"
 # Advanced layers are optional: a failed download keeps the previous copy and the build marks metrics unavailable.
 fetch data/pbp_2026.csv.gz       "$B/pbp/play_by_play_2026.csv.gz" 0
