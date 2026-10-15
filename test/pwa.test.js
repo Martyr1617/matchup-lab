@@ -13,8 +13,8 @@ test('manifest is installable at the GitHub Pages subpath', () => {
   assert.equal(manifest.display, 'standalone');
   assert.equal(manifest.start_url, '/matchup-lab/');
   assert.equal(manifest.scope, '/matchup-lab/');
-  assert.equal(manifest.theme_color, '#001E4A');
-  assert.equal(manifest.background_color, '#f3f4f0');
+  assert.equal(manifest.theme_color, '#0b3d24');
+  assert.equal(manifest.background_color, '#04140d');
   assert.ok(manifest.start_url.startsWith(manifest.scope));
   const icons = Object.fromEntries(manifest.icons.map(icon => [icon.purpose + ':' + icon.sizes, icon.src]));
   assert.equal(icons['any:192x192'], '/matchup-lab/icon-192.png');

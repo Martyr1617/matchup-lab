@@ -6,8 +6,8 @@
   "start_url": "/matchup-lab/",
   "scope": "/matchup-lab/",
   "display": "standalone",
-  "background_color": "#f3f4f0",
-  "theme_color": "#001E4A",
+  "background_color": "#04140d",
+  "theme_color": "#0b3d24",
   "icons": [
     { "src": "/matchup-lab/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
     { "src": "/matchup-lab/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
