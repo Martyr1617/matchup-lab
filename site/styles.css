@@ -178,8 +178,13 @@ select {
   color: var(--color-text-muted); font-size: var(--text-sm); font-weight: 500; transition: background 0.15s, color 0.15s;
 }
 .segmented button[aria-checked='true'] { background: var(--color-gold); color: var(--color-gold-ink); }
-.icon-btn { width: 36px; height: 36px; display: inline-grid; place-items: center; border: 1px solid var(--color-border); border-radius: 50%; background: var(--color-surface-2); color: var(--color-text); }
+.icon-btn { width: 44px; height: 44px; flex: 0 0 auto; display: inline-grid; place-items: center; border: 1px solid var(--color-border); border-radius: 50%; background: var(--color-surface-2); color: var(--color-text); }
+.icon-btn:disabled { cursor: default; }
 .icon-btn svg { width: 18px; height: 18px; }
+.refresh-cluster { display: inline-flex; align-items: center; gap: var(--space-2); }
+.refresh-status { max-width: 8.5rem; color: var(--color-on-header-muted, var(--color-text-muted)); font-size: var(--text-xs); font-weight: 600; line-height: 1.2; text-align: right; }
+.refresh-btn-busy svg, #refreshBtn[aria-busy="true"] svg { animation: ml-spin 0.7s linear infinite; transform-origin: center; }
+@keyframes ml-spin { to { transform: rotate(360deg); } }
 
 .tabs { display: flex; gap: var(--space-1); padding: 0 var(--space-6); background: var(--color-field-deep); border-bottom: 1px solid var(--color-border); overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
 .tabs::-webkit-scrollbar { display: none; }

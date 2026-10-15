@@ -978,15 +978,34 @@
   }
   function rerender() { if (state.view === 'board') renderBoard(); else if (state.view === 'player' && state.player) renderPlayer(state.player); else if (state.view === 'team' && window.MLTeam) window.MLTeam.render(); else if (state.view === 'compare') renderCompare(); else if (state.view === 'news') renderNews(); else if (state.view === 'trade' && window.MLTrade) window.MLTrade.render(); }
 
-  function initControls() {
+  function fillWeeks(preserve) {
     const sel = $('#weekSelect');
+    if (!sel || !state.data) return;
+    const prev = preserve ? state.week : null;
     let weeks = Object.keys(state.data.schedule).map(Number).filter(w => w >= state.data.meta.next_week).sort((a, b) => a - b);
     if (!weeks.length) { weeks = [state.data.meta.last_completed_week]; state.data.meta.next_week = weeks[0]; } // season over: show last week
     sel.innerHTML = weeks.map(w => `<option value="${w}">Week ${w}${w === state.data.meta.next_week ? ' (next)' : ''}</option>`).join('');
-    state.week = state.data.meta.next_week;
+    const pick = prev != null && weeks.includes(prev) ? prev : state.data.meta.next_week;
+    state.week = pick;
     sel.value = String(state.week);
     const weekLabel = $('#boardWeekLabel');
-    if (weekLabel) weekLabel.textContent = `Week ${state.data.meta.next_week}`;
+    if (weekLabel && state.view === 'board') weekLabel.textContent = `Week ${state.week}`;
+  }
+  function renderCurrent() {
+    const v = state.view;
+    if (v === 'board') renderBoard();
+    else if (v === 'defense') renderDefense();
+    else if (v === 'player' && state.player) renderPlayer(state.player);
+    else if (v === 'team' && window.MLTeam) window.MLTeam.render();
+    else if (v === 'compare') renderCompare();
+    else if (v === 'news') renderNews();
+    else if (v === 'trade' && window.MLTrade) window.MLTrade.render();
+    const stamp = $('#genStamp');
+    if (stamp && state.data && state.data.meta) stamp.textContent = state.data.meta.generated;
+  }
+  function initControls() {
+    fillWeeks(false);
+    const sel = $('#weekSelect');
     sel.addEventListener('change', () => { state.week = Number(sel.value); rerender(); });
 
     const seg = (id, onChange) => {
@@ -1050,25 +1069,188 @@
   function usableData(d) {
     return !!(d && Array.isArray(d.players) && d.players.length >= 100 && d.meta);
   }
+  function sanitizeData(data) {
+    const POS = /^(QB|RB|WR|TE)$/, TM = /^[A-Z]{2,3}$/;
+    data.players = data.players.filter(p => POS.test(p.pos)).map(p => ({ ...p, team: TM.test(p.team) ? p.team : '' }));
+    for (const wk in data.schedule) data.schedule[wk] = (data.schedule[wk] || []).filter(g => TM.test(g.home) && TM.test(g.away));
+    return data;
+  }
+  function generatedAge() {
+    const generated = state.data && state.data.meta && state.data.meta.generated;
+    const t = parseGenerated(generated);
+    return { generated, t, age: t == null ? '' : agePhrase(t) };
+  }
+  function paintRefreshStatus(mode) {
+    const text = $('#refreshStatusText');
+    const more = $('#refreshStatusMore');
+    const btn = $('#refreshBtn');
+    const info = generatedAge();
+    let visible = '';
+    let detail = 'Refresh data';
+    if (mode === 'busy') {
+      visible = 'Updating…';
+      detail = 'Updating data';
+    } else if (mode === 'fail') {
+      visible = 'Update failed';
+      detail = info.generated
+        ? `Couldn't refresh. This screen is still using the data generated ${info.generated}${info.age ? ' (' + info.age + ' ago)' : ''}.`
+        : "Couldn't refresh. Check your connection and try again.";
+    } else if (mode === 'ok') {
+      visible = 'Updated just now';
+      detail = info.generated
+        ? `Updated just now. Data generated ${info.generated}${info.age ? ', ' + info.age + ' old' : ''}.`
+        : 'Updated just now.';
+    } else if (info.t != null) {
+      visible = info.age + ' old';
+      detail = `Data generated ${info.generated}, ${info.age} ago.`;
+    }
+    if (text) text.textContent = visible;
+    if (more) more.textContent = detail === visible ? '' : detail;
+    if (btn && mode !== 'busy') btn.setAttribute('aria-label', 'Refresh data. ' + detail);
+    if (btn) btn.title = detail;
+  }
+  function setRefreshBusy(on) {
+    const btn = $('#refreshBtn');
+    if (!btn) return;
+    btn.setAttribute('aria-busy', on ? 'true' : 'false');
+    btn.disabled = !!on;
+    if (on) paintRefreshStatus('busy');
+  }
+  async function fetchJson(url, ms, fresh) {
+    const ctl = new AbortController();
+    const to = setTimeout(() => ctl.abort(), ms == null ? 15000 : ms);
+    try {
+      const res = await fetch(url, { cache: fresh ? 'no-store' : 'no-cache', signal: ctl.signal });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return await res.json();
+    } finally { clearTimeout(to); }
+  }
+  // The main pane is its own scroller, so a pull gesture would fight that
+  // scroll and the installed app. Refresh stays on the header button.
+  async function activateWaitingApp() {
+    if (!('serviceWorker' in navigator) || !navigator.serviceWorker.controller) return false;
+    let reg;
+    try { reg = await navigator.serviceWorker.getRegistration(); } catch (e) { return false; }
+    if (!reg) return false;
+    try { await reg.update(); } catch (e) { /* the data refresh still stands */ }
+    let worker = reg.waiting;
+    if (!worker && reg.installing) {
+      worker = await new Promise(resolve => {
+        const installing = reg.installing;
+        const timer = setTimeout(() => resolve(null), 4000);
+        installing.addEventListener('statechange', () => {
+          if (installing.state === 'installed') { clearTimeout(timer); resolve(reg.waiting || installing); }
+          else if (installing.state === 'redundant') { clearTimeout(timer); resolve(null); }
+        });
+      });
+    }
+    if (!worker) return false;
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (reloaded) return;
+      reloaded = true;
+      location.reload();
+    });
+    worker.postMessage({ type: 'SKIP_WAITING' });
+    return true;
+  }
+  let refreshing = false;
+  let booted = false;
+  async function refreshData() {
+    if (refreshing) return;
+    refreshing = true;
+    setRefreshBusy(true);
+    const started = Date.now();
+    const q = '?t=' + Date.now() + '&fresh=1';
+    const previous = state.data;
+    try {
+      const d = await fetchJson(REMOTE + 'data.json' + q, 12000, true);
+      if (!usableData(d)) throw new Error('bad remote');
+      sanitizeData(d);
+      const view = state.view;
+      const week = state.week;
+      const scoring = state.scoring;
+      const pos = state.pos;
+      const playerId = state.player && state.player.id;
+      state.data = d;
+      state.dataSrc = 'remote';
+      state.view = view;
+      state.scoring = scoring;
+      state.pos = pos;
+      state.week = week;
+      if (playerId) {
+        const fresh = state.data.players.find(p => p.id === playerId);
+        if (fresh) state.player = fresh;
+      }
+      try { state.market = await fetchJson(REMOTE + 'market.json' + q, 8000, true); } catch (e) { /* keep the odds already on screen */ }
+      try { state.news = await fetchJson(REMOTE + 'news.json' + q, 8000, true); } catch (e) { /* keep the news already on screen */ }
+      indexNews();
+      if (window.MLTrade) window.MLTrade.ensure(state.data);
+      noteDataFreshness(state.data, 'remote');
+      if (booted) {
+        fillWeeks(true);
+        renderCurrent();
+      } else {
+        startUi();
+      }
+      const wait = 450 - (Date.now() - started);
+      if (wait > 0) await new Promise(r => setTimeout(r, wait));
+      paintRefreshStatus('ok');
+    } catch (e) {
+      if (previous) state.data = previous;
+      const info = generatedAge();
+      const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+      const msg = offline
+        ? `You're offline. This screen is still showing${info.generated ? ' the data generated ' + info.generated : ' the last data that loaded'}.`
+        : `Couldn't refresh. Check your connection and try again.${info.generated ? ' This screen is still showing the data generated ' + info.generated + '.' : ''}`;
+      showDataStatus(msg, true);
+      paintRefreshStatus('fail');
+    } finally {
+      refreshing = false;
+      setRefreshBusy(false);
+      if ($('#refreshStatusText') && $('#refreshStatusText').textContent === 'Updating…') paintRefreshStatus(state.data ? 'idle' : 'fail');
+    }
+    if ($('#refreshStatusText') && $('#refreshStatusText').textContent === 'Updated just now') await activateWaitingApp();
+  }
+  function bindRefresh() {
+    const btn = $('#refreshBtn');
+    if (!btn || btn.dataset.bound) return;
+    btn.dataset.bound = '1';
+    btn.addEventListener('click', () => { refreshData(); });
+  }
+  function startUi() {
+    if (booted) return;
+    booted = true;
+    const safe = (fn, name) => { try { fn(); } catch (e) { console.error(name, e); } };
+    safe(initControls, 'controls');
+    safe(initSearch, 'search');
+    safe(renderBoard, 'board');
+    if (!refreshing) paintRefreshStatus('idle');
+    loadLiveInjuries();
+    window.ML = { state, SCORING, weatherChip, weatherText, loadWeather, injuryOf, isOut, project, makeDist, gameFor, f1, f2, pct, esc, avatar, statusFlag, newsBadge, hasInjuryNews, openPlayer, rkOrd, fmtKick, tn, setView, compareRows, compareTable, renderNews, renderBoard, refreshData };
+    if (window.MLTeam) window.MLTeam.init();
+    if (window.MLTrade) window.MLTrade.init();
+  }
   async function boot() {
     initTheme();
+    bindRefresh();
     $('#boardBody').innerHTML = Array.from({ length: 8 }, () => `<tr><td colspan="9"><div class="skeleton" style="height:40px">&nbsp;</div></td></tr>`).join('');
-    const get = async (url, ms = 15000) => {
-      const ctl = new AbortController(); const to = setTimeout(() => ctl.abort(), ms);
-      try { const res = await fetch(url, { cache: 'no-cache', signal: ctl.signal }); if (!res.ok) throw new Error('HTTP ' + res.status); return await res.json(); }
-      finally { clearTimeout(to); }
-    };
+    const get = (url, ms) => fetchJson(url, ms, false);
     // Fresh data is rebuilt every few hours; the copy shipped with the site is the fallback.
     try {
       const d = await get(REMOTE + 'data.json?t=' + Math.floor(Date.now() / 6e5), 8000);
+      if (booted) return;
       if (!usableData(d)) throw new Error('bad remote');
       state.data = d; state.dataSrc = 'remote';
     } catch (e0) {
+      if (booted) return;
       try {
         const d = await get('data.json?v=' + (window.ML_VER || Date.now()));
+        if (booted) return;
         if (!usableData(d)) throw new Error('bad local');
         state.data = d; state.dataSrc = 'local';
       } catch (e1) {
+        if (booted) return;
         const why = e0.name === 'AbortError' ? 'timed out' : (e0.message || 'request failed');
         const msg = `Data unavailable. Live projections could not be loaded (${why}), and this page has no usable bundled data.json.${storedGeneratedAge()}`;
         showDataStatus(msg, true);
@@ -1076,21 +1258,20 @@
         return;
       }
     }
+    if (booted) return;
+    sanitizeData(state.data);
     noteDataFreshness(state.data, state.dataSrc);
-    // Defense in depth: position and team codes are interpolated into class names / HTML, so allowlist them
-    { const POS = /^(QB|RB|WR|TE)$/, TM = /^[A-Z]{2,3}$/;
-      state.data.players = state.data.players.filter(p => POS.test(p.pos)).map(p => ({ ...p, team: TM.test(p.team) ? p.team : '' }));
-      for (const wk in state.data.schedule) state.data.schedule[wk] = state.data.schedule[wk].filter(g => TM.test(g.home) && TM.test(g.away)); }
-    const getM = async u => { const r = await fetch(u, { cache: 'no-cache' }); if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); };
-    try { state.market = await getM(REMOTE + 'market.json?t=' + Math.floor(Date.now() / 6e5)); } catch (e) { try { state.market = await getM('market.json?v=' + (window.ML_VER || Date.now())); } catch (e2) { state.market = null; } }
-    try { state.news = await getM(REMOTE + 'news.json?t=' + Math.floor(Date.now() / 6e5)); } catch (e) { try { state.news = await getM('news.json?v=' + (window.ML_VER || Date.now())); } catch (e2) { state.news = null; } }
+    let market = null;
+    try { market = await get(REMOTE + 'market.json?t=' + Math.floor(Date.now() / 6e5), 15000); } catch (e) { try { market = await get('market.json?v=' + (window.ML_VER || Date.now()), 15000); } catch (e2) { market = null; } }
+    if (booted) return;
+    state.market = market;
+    let news = null;
+    try { news = await get(REMOTE + 'news.json?t=' + Math.floor(Date.now() / 6e5), 15000); } catch (e) { try { news = await get('news.json?v=' + (window.ML_VER || Date.now()), 15000); } catch (e2) { news = null; } }
+    if (booted) return;
+    state.news = news;
     indexNews();
     if (window.MLTrade) window.MLTrade.ensure(state.data);
-    const safe = (fn, name) => { try { fn(); } catch (e) { console.error(name, e); } };
-    safe(initControls, 'controls'); safe(initSearch, 'search'); safe(renderBoard, 'board'); loadLiveInjuries();
-    window.ML = { state, SCORING, weatherChip, weatherText, loadWeather, injuryOf, isOut, project, makeDist, gameFor, f1, f2, pct, esc, avatar, statusFlag, newsBadge, hasInjuryNews, openPlayer, rkOrd, fmtKick, tn, setView, compareRows, compareTable, renderNews, renderBoard };
-    if (window.MLTeam) window.MLTeam.init();
-    if (window.MLTrade) window.MLTrade.init();
+    startUi();
   }
   boot();
 })();
