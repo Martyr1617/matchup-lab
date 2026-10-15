@@ -38,6 +38,7 @@ jobs:
           # copy the last good market.json forward instead of omitting it.
           if git fetch --depth=1 "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" data; then
             git show FETCH_HEAD:market.json > /tmp/prev_market.json 2>/dev/null || rm -f /tmp/prev_market.json
+            git show FETCH_HEAD:news.json > /tmp/prev_news.json 2>/dev/null || rm -f /tmp/prev_news.json
           fi
       - name: Vegas lines + player props (ESPN / DraftKings)
         id: market
@@ -63,9 +64,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          python3 -c "from fetch_news import restore_previous; restore_previous()"
           mkdir out
           cp site/data.json out/
           [ -f site/market.json ] && cp site/market.json out/ || true
+          [ -f site/news.json ] && cp site/news.json out/ || true
           cd out
           git init -q -b data
           git config user.name "github-actions[bot]"
