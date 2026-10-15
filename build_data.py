@@ -7,6 +7,89 @@ import build_advanced
 
 SEASON = 2026
 D = 'data/'
+SKILL_POS = ['QB', 'RB', 'WR', 'TE']
+# Questionable is not unavailable. Doubtful is, matching the lineup page.
+OUT_REPORT = {'out', 'ir', 'injured reserve', 'doubtful', 'pup', 'suspended', 'sus'}
+
+
+def build_roles(games, injuries, depth_path, season):
+    """Pregame depth-chart order and players ruled out, keyed by week.
+
+    The chart is the last daily depth chart strictly before that week's game.
+    A missing or unreadable depth file returns {} so projections stay unchanged.
+    """
+    if not depth_path or not os.path.exists(depth_path) or os.path.getsize(depth_path) == 0:
+        return {}
+    try:
+        dc = pd.read_csv(depth_path, low_memory=False)
+    except Exception as ex:
+        print('depth chart unavailable', ex)
+        return {}
+    if 'gsis_id' not in dc.columns or 'pos_abb' not in dc.columns or 'dt' not in dc.columns:
+        print('depth chart missing columns')
+        return {}
+
+    roles = {}
+    inj = injuries
+    if inj is not None and len(inj):
+        if 'season' in inj.columns:
+            inj = inj[inj.season == season]
+        if 'game_type' in inj.columns:
+            inj = inj[inj.game_type == 'REG']
+        elif 'season_type' in inj.columns:
+            inj = inj[inj.season_type == 'REG']
+        for wk, d in inj.groupby('week'):
+            try:
+                wk = int(wk)
+            except (TypeError, ValueError):
+                continue
+            if wk < 1 or wk > 18:
+                continue
+            ruled = []
+            for pid, rows in d.groupby('gsis_id'):
+                status = rows.iloc[-1].report_status
+                if isinstance(status, str) and status.strip().lower() in OUT_REPORT:
+                    ruled.append(str(pid))
+            roles[str(wk)] = {'out': ruled, 'chart': {}}
+
+    dc = dc[dc.pos_abb.isin(SKILL_POS) & dc.gsis_id.notna()].copy()
+    if not len(dc):
+        return roles
+    dc['day'] = dc.dt.astype(str).str.slice(0, 10)
+    dc = dc.sort_values('dt').groupby(['day', 'team', 'pos_abb', 'gsis_id'], as_index=False).tail(1)
+    by_key = {}
+    days_by_team = {}
+    for row in dc.itertuples(index=False):
+        by_key.setdefault((row.team, row.pos_abb, row.day), []).append((row.pos_rank, str(row.gsis_id)))
+        days_by_team.setdefault(row.team, set()).add(row.day)
+    if games is None:
+        return roles
+    for row in games.itertuples(index=False):
+        try:
+            wk = int(row.week)
+        except (TypeError, ValueError):
+            continue
+        if wk < 1 or wk > 18:
+            continue
+        day = row.gameday if isinstance(row.gameday, str) else None
+        if not day:
+            continue
+        for team in (row.home_team, row.away_team):
+            days = sorted(d for d in days_by_team.get(team, ()) if d < day)
+            if not days:
+                continue
+            last = days[-1]
+            bucket = roles.setdefault(str(wk), {'out': [], 'chart': {}})
+            for pos in SKILL_POS:
+                ranked = by_key.get((team, pos, last))
+                if not ranked:
+                    continue
+                order = []
+                for _, pid in sorted(ranked, key=lambda x: (x[0] if x[0] == x[0] else 99, x[1])):
+                    if pid not in order:
+                        order.append(pid)
+                bucket['chart'].setdefault(team, {})[pos] = order
+    return roles
 
 
 def regular_season_games(games, season):
@@ -351,6 +434,8 @@ def main():
         if isinstance(o, (np.integer,)): return int(o)
         return o
 
+    roles = build_roles(g, pd.read_csv(D + 'injuries_2026.csv'), D + 'depth_2026.csv', SEASON)
+    print('role weeks', len(roles))
     adv, team_ctx, avail = build_advanced.build(CUR_WEEK, players, season=SEASON)
     for pl in players:
         pl['adv'] = adv.get(pl['id'])
@@ -358,10 +443,10 @@ def main():
     out = {
         'meta': {'season': SEASON, 'last_completed_week': CUR_WEEK, 'next_week': NEXT_WEEK,
                  'generated': pd.Timestamp.now('UTC').strftime('%Y-%m-%d %H:%M UTC'), 'injury_week': latest_inj_week,
-                 'source': 'nflverse (stats_player_week, stats_team_week, games, injuries)'},
+                 'source': 'nflverse (stats_player_week, stats_team_week, games, injuries, depth_charts)'},
         'league': clean(lg), 'league_pos': clean(lg_pos),
         'team_names': TEAM_NAMES, 'team_off': clean(team_off), 'defense': clean(defense),
-        'schedule': schedule, 'players': clean(players), 'sl_extra': sl_extra,
+        'schedule': schedule, 'players': clean(players), 'sl_extra': sl_extra, 'roles': roles,
         'team_ctx': clean(team_ctx), 'avail': avail,
     }
     with open('site/data.json', 'w') as f:

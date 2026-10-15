@@ -109,6 +109,96 @@ test('props are keyed by ESPN id so same-name players do not collide', () => {
   assert.equal(normName('Josh Allen Jr.'), 'joshallen');
 });
 
+function seaWeek(roles, players) {
+  const e = env();
+  e.data.schedule[3] = [{ home: 'WAS', away: 'SEA', id: 'g3', spread_line: 3, total_line: 45, home_score: null, away_score: null }];
+  e.data.defense.WAS = defense(22);
+  e.data.team_off.SEA = { pts_pg: 24 };
+  e.data.team_off.WAS = { pts_pg: 20 };
+  e.data.roles = roles ? { 3: roles } : null;
+  e.data.players = players;
+  return e;
+}
+const darnold = {
+  id: '00-0034869', name: 'Sam Darnold', pos: 'QB', team: 'SEA', g: 1, cv: 0.4,
+  w: { pa: 2, py: 14, ptd: 0, int: 0, ca: 1, ry: 4, rtd: 0, tg: 0, rc: 0, rcy: 0, rctd: 0 },
+  t: { pa: 2, py: 14, ptd: 0, int: 0, ca: 1, ry: 4, rtd: 0, tg: 0, rc: 0, rcy: 0, rctd: 0, fl: 0, two: 0 },
+  log: [{ wk: 1, pa: 2, py: 14, ptd: 0 }],
+};
+const lock = {
+  id: '00-0035704', name: 'Drew Lock', pos: 'QB', team: 'SEA', g: 2, cv: 0.4,
+  w: { pa: 24, py: 170, ptd: 1, int: 0.5, ca: 2, ry: 8, rtd: 0, tg: 0, rc: 0, rcy: 0, rctd: 0 },
+  t: { pa: 48, py: 340, ptd: 2, int: 1, ca: 4, ry: 16, rtd: 0, tg: 0, rc: 0, rcy: 0, rctd: 0, fl: 0, two: 0 },
+  log: [{ wk: 1, pa: 22 }, { wk: 2, pa: 26 }],
+};
+const charted = { out: [], chart: { SEA: { QB: [darnold.id, lock.id] } } };
+
+test('a charted starter with backup volume inherits the teammate who was playing', () => {
+  const bare = project(darnold, 3, 'ppr', seaWeek(null, [darnold, lock]));
+  const handed = project(darnold, 3, 'ppr', seaWeek(charted, [darnold, lock]));
+  assert.ok(bare.comps.pa < 8, bare.comps.pa);
+  assert.ok(bare.pts < 4, bare.pts);
+  assert.ok(handed.comps.pa > 15, handed.comps.pa);
+  assert.ok(handed.pts > bare.pts * 3, `${handed.pts} vs ${bare.pts}`);
+  assert.equal(darnold.w.pa, 2);
+  // A starter who already has a full attempt line does not take anyone else's.
+  const dart = { ...darnold, id: 'dart', w: { ...darnold.w, pa: 29 }, t: { ...darnold.t, pa: 29 } };
+  const busy = project(dart, 3, 'ppr', seaWeek({ out: [], chart: { SEA: { QB: ['dart', lock.id] } } }, [dart, lock]));
+  assert.ok(Math.abs(busy.comps.pa - bare.comps.pa * (29 / 2)) < 1.5, busy.comps.pa);
+});
+
+test('an unavailable charted starter keeps his own volume and a healthy QB1 caps the backup', () => {
+  const out = project(darnold, 3, 'ppr', seaWeek({ out: [darnold.id], chart: charted.chart }, [darnold, lock]));
+  assert.ok(out.comps.pa < 8, out.comps.pa);
+  const capped = project(lock, 3, 'ppr', seaWeek(charted, [darnold, lock]));
+  const free = project(lock, 3, 'ppr', seaWeek(null, [darnold, lock]));
+  assert.ok(free.comps.pa > 15, free.comps.pa);
+  assert.ok(capped.comps.pa < 6, capped.comps.pa);
+  assert.equal(lock.w.pa, 24);
+  // A charted starter who already throws a starter's volume does not cap teammates.
+  const busy = { ...darnold, w: { ...darnold.w, pa: 30 }, t: { ...darnold.t, pa: 30 }, log: [{ wk: 1, pa: 30 }] };
+  const kept = project(lock, 3, 'ppr', seaWeek({ out: [], chart: charted.chart }, [busy, lock]));
+  assert.ok(kept.comps.pa > 15, kept.comps.pa);
+});
+
+test('the next charted receiver inherits an unavailable teammate only when his own usage is thin', () => {
+  const wr1 = {
+    id: 'wr1', name: 'WR1', pos: 'WR', team: 'SEA', g: 1, cv: 0.5,
+    w: { pa: 0, py: 0, ptd: 0, int: 0, ca: 0, ry: 0, rtd: 0, tg: 8, rc: 5, rcy: 70, rctd: 0.3 },
+    t: { pa: 0, py: 0, ptd: 0, int: 0, ca: 0, ry: 0, rtd: 0, tg: 8, rc: 5, rcy: 70, rctd: 0, fl: 0, two: 0 },
+    log: [{ wk: 1, tg: 8 }],
+  };
+  const wr2 = {
+    id: 'wr2', name: 'WR2', pos: 'WR', team: 'SEA', g: 1, cv: 0.5,
+    w: { pa: 0, py: 0, ptd: 0, int: 0, ca: 0, ry: 0, rtd: 0, tg: 1, rc: 0, rcy: 0, rctd: 0 },
+    t: { pa: 0, py: 0, ptd: 0, int: 0, ca: 0, ry: 0, rtd: 0, tg: 1, rc: 0, rcy: 0, rctd: 0, fl: 0, two: 0 },
+    log: [{ wk: 1, tg: 1 }],
+  };
+  const deep = {
+    id: 'wr4', name: 'WR4', pos: 'WR', team: 'SEA', g: 1, cv: 0.5,
+    w: { ...wr2.w }, t: { ...wr2.t }, log: [{ wk: 1, tg: 1 }],
+  };
+  const roles = { out: ['wr1'], chart: { SEA: { WR: ['wr1', 'wr2', 'wr3', 'wr4'] } } };
+  const e = seaWeek(roles, [wr1, wr2, deep]);
+  const next = project(wr2, 3, 'ppr', e);
+  const buried = project(deep, 3, 'ppr', e);
+  assert.ok(next.comps.tg > 5, next.comps.tg);
+  assert.ok(buried.comps.tg < 3, buried.comps.tg);
+});
+
+test('receiving yardage uses the position rate instead of the all-positions rate', () => {
+  const wr = {
+    id: 'wr1', name: 'Wideout', pos: 'WR', team: 'BUF', g: 1, cv: 0.5,
+    w: { pa: 0, py: 0, ptd: 0, int: 0, ca: 0, ry: 0, rtd: 0, tg: 6, rc: 4, rcy: 50, rctd: 0.2 },
+    t: { pa: 0, py: 0, ptd: 0, int: 0, ca: 0, ry: 0, rtd: 0, tg: 6, rc: 4, rcy: 50, rctd: 0, fl: 0, two: 0 },
+  };
+  const low = project(wr, 6, 'ppr', env());
+  const e = env();
+  e.data.league_pos = { WR: { rec_yds_pg: 150, tgt_pg: 18, rec_td_pg: 0.9 } };
+  const high = project(wr, 6, 'ppr', e);
+  assert.ok(high.comps.rcy > low.comps.rcy, `${high.comps.rcy} vs ${low.comps.rcy}`);
+});
+
 test('propMean stays available to the player page', () => {
   assert.equal(propMean({ line: 100, p_over: 0.5 }, true), 105);
   assert.equal(propMean({ line: 20 }, false), 20);
