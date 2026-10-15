@@ -54,6 +54,43 @@ test('news and trade sit immediately after my team', () => {
   assert.match(nav, /class="tab is-active" data-view="board"/);
 });
 
+test('the header refresh button updates data in place and can activate a waiting worker', () => {
+  const html = read('index.html');
+  const controls = html.slice(html.indexOf('<div class="controls">'), html.indexOf('</header>'));
+  const refreshAt = controls.indexOf('id="refreshBtn"');
+  const settingsAt = controls.indexOf('id="settingsBtn"');
+  assert.ok(refreshAt > 0 && settingsAt > refreshAt);
+  assert.match(controls, /aria-label="Refresh data"/);
+  assert.match(controls, /id="refreshStatus" class="refresh-status" role="status" aria-live="polite"/);
+  const css = read('styles.css');
+  assert.match(css, /\.icon-btn \{[^}]*width: 44px;[^}]*height: 44px/);
+  assert.match(css, /#refreshBtn\[aria-busy="true"\] svg \{ animation: ml-spin/);
+  assert.match(css, /prefers-reduced-motion: reduce/);
+  const app = read('app.js');
+  assert.match(app, /cache: fresh \? 'no-store' : 'no-cache'/);
+  assert.match(app, /&fresh=1/);
+  assert.match(app, /data\.json/);
+  assert.match(app, /market\.json/);
+  assert.match(app, /news\.json/);
+  assert.match(app, /MLTrade\.ensure\(state\.data\)/);
+  assert.match(app, /Updated just now/);
+  assert.match(app, /Couldn't refresh/);
+  assert.match(app, /You're offline/);
+  assert.match(app, /state\.view = view/);
+  assert.match(app, /fillWeeks\(true\)/);
+  assert.match(app, /type: 'SKIP_WAITING'/);
+  assert.match(html, /updateViaCache: 'none'/);
+  assert.doesNotMatch(app, /pull-to-refresh|touchstart[\s\S]{0,80}refreshData/);
+  const sw = read('sw.js');
+  assert.match(sw, /if \(type === 'SKIP_WAITING'\) self\.skipWaiting\(\)/);
+  assert.match(sw, /if \(!self\.registration\.active\) self\.skipWaiting\(\)/);
+  assert.match(sw, /searchParams\.has\('fresh'\)/);
+  assert.match(sw, /if \(fresh\) throw err/);
+  assert.match(sw, /self\.clients\.claim\(\)/);
+  assert.match(sw, /key\.startsWith\('ml-shell-'\) && key !== SHELL_CACHE/);
+  assert.doesNotMatch(sw, /caches\.delete\(DATA_CACHE\)|caches\.delete\('ml-data'\)/);
+});
+
 test('the page registers the worker and declares an iOS icon', () => {
   const html = read('index.html');
   assert.match(html, /viewport-fit=cover/);
@@ -62,7 +99,7 @@ test('the page registers the worker and declares an iOS icon', () => {
   assert.match(html, /apple-mobile-web-app-capable" content="yes"/);
   assert.match(html, /apple-mobile-web-app-status-bar-style" content="black-translucent"/);
   assert.match(html, /apple-mobile-web-app-title" content="Matchup Lab"/);
-  assert.match(html, /serviceWorker\.register\('sw\.js'\)/);
+  assert.match(html, /serviceWorker\.register\('sw\.js'/);
   assert.match(html, /rel="icon" href="icon\.svg"/);
   assert.doesNotMatch(html, /ellipse/);
   const css = read('styles.css');

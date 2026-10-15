@@ -42,8 +42,8 @@
   window.MLThemeBoot = { appearance: appearance, team: team, mode: mode };
 })();
 </script>
-<link rel="stylesheet" href="styles.css?v=ce05c662f9" />
-<link rel="stylesheet" href="themes.css?v=ce05c662f9" />
+<link rel="stylesheet" href="styles.css?v=750deae7bc" />
+<link rel="stylesheet" href="themes.css?v=750deae7bc" />
 </head>
 <body>
 <div class="app">
@@ -71,6 +71,12 @@
           <button type="button" role="radio" data-val="half" aria-checked="false">Half</button>
           <button type="button" role="radio" data-val="std" aria-checked="false">Std</button>
         </div>
+      </div>
+      <div class="refresh-cluster">
+        <span id="refreshStatus" class="refresh-status" role="status" aria-live="polite"><span id="refreshStatusText"></span><span id="refreshStatusMore" class="sr-only"></span></span>
+        <button id="refreshBtn" class="icon-btn" type="button" aria-label="Refresh data">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+        </button>
       </div>
       <button id="settingsBtn" class="icon-btn" type="button" aria-label="Settings" aria-haspopup="dialog" aria-controls="settingsDialog" aria-expanded="false">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9c.3.6.9 1 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
@@ -333,16 +339,16 @@
   </div>
 </div>
 
-<script>window.ML_VER="ce05c662f9";</script>
-<script src="chart.umd.min.js?v=ce05c662f9"></script>
-<script src="lineup.js?v=ce05c662f9"></script>
-<script src="team.js?v=ce05c662f9"></script>
-<script src="glossary.js?v=ce05c662f9"></script>
-<script src="model.js?v=ce05c662f9"></script>
-<script src="trade.js?v=ce05c662f9"></script>
-<script src="app.js?v=ce05c662f9"></script>
+<script>window.ML_VER="750deae7bc";</script>
+<script src="chart.umd.min.js?v=750deae7bc"></script>
+<script src="lineup.js?v=750deae7bc"></script>
+<script src="team.js?v=750deae7bc"></script>
+<script src="glossary.js?v=750deae7bc"></script>
+<script src="model.js?v=750deae7bc"></script>
+<script src="trade.js?v=750deae7bc"></script>
+<script src="app.js?v=750deae7bc"></script>
 <script>
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' });
 </script>
 </body>
 </html>
