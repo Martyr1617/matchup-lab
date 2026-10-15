@@ -12,6 +12,77 @@ SKILL_POS = ['QB', 'RB', 'WR', 'TE']
 OUT_REPORT = {'out', 'ir', 'injured reserve', 'doubtful', 'pup', 'suspended', 'sus'}
 
 
+def attach_snap_share(players, snaps, pfr_to_gsis, cur_week, decay=0.7):
+    """Record offensive snap share and the volume that share implies.
+
+    The rate is this season's position volume per snap share on games already
+    played. A missing file, a failed read, or an unmapped player leaves that
+    player's usage line unchanged.
+    """
+    if snaps is None or not len(snaps) or not pfr_to_gsis:
+        return 0
+    s = snaps
+    if 'game_type' in s.columns:
+        s = s[s.game_type == 'REG']
+    if 'week' in s.columns:
+        s = s[(s.week >= 1) & (s.week <= cur_week)]
+    if not len(s) or 'pfr_player_id' not in s.columns or 'offense_pct' not in s.columns:
+        return 0
+    share = {}
+    for row in s.itertuples(index=False):
+        gid = pfr_to_gsis.get(row.pfr_player_id)
+        if not gid:
+            continue
+        try:
+            pct = float(row.offense_pct)
+        except (TypeError, ValueError):
+            continue
+        if pct != pct:
+            continue
+        share[(str(gid), int(row.week))] = pct
+    if not share:
+        return 0
+    acc = {}
+    for pl in players:
+        bucket = acc.setdefault(pl['pos'], {'pa': 0.0, 'ca': 0.0, 'tg': 0.0, 'sp': 0.0})
+        for g in pl.get('log') or []:
+            sp = share.get((str(pl['id']), int(g['wk'])))
+            if sp is None or sp <= 0:
+                continue
+            bucket['pa'] += g.get('pa') or 0
+            bucket['ca'] += g.get('ca') or 0
+            bucket['tg'] += g.get('tg') or 0
+            bucket['sp'] += sp
+    rate = {}
+    for pos, a in acc.items():
+        if a['sp'] > 0:
+            rate[pos] = {k: a[k] / a['sp'] for k in ('pa', 'ca', 'tg')}
+    n = 0
+    for pl in players:
+        wsum = 0.0
+        acc_sp = 0.0
+        seen = False
+        for g in pl.get('log') or []:
+            sp = share.get((str(pl['id']), int(g['wk'])))
+            if sp is None:
+                continue
+            g['sp'] = round(sp, 3)
+            seen = True
+            wt = decay ** (cur_week - int(g['wk']))
+            wsum += wt
+            acc_sp += wt * sp
+        rt = rate.get(pl['pos'])
+        if seen and wsum and rt:
+            snap = acc_sp / wsum
+            pl['snapImplied'] = {
+                'pa': round(snap * rt['pa'], 2),
+                'ca': round(snap * rt['ca'], 2),
+                'tg': round(snap * rt['tg'], 2),
+            }
+            n += 1
+    return n
+
+
 def build_roles(games, injuries, depth_path, season):
     """Pregame depth-chart order and players ruled out, keyed by week.
 
@@ -384,6 +455,7 @@ def main():
         if gs and isinstance(gs, str) and gs.strip():
             ids_by_gsis[gs.strip()] = {'sl': sid, 'espn': sp_.get('espn_id'), 'yahoo': sp_.get('yahoo_id'),
                                         'inj': sp_.get('injury_status'), 'injb': sp_.get('injury_body_part')}
+    pfr_to_gsis = {}
     try:
         dbi = pd.read_csv(D + 'db_playerids.csv', dtype=str)
         for _, row in dbi[dbi.gsis_id.notna()].iterrows():
@@ -391,6 +463,8 @@ def main():
             if not e.get('sl') and isinstance(row.sleeper_id, str): e['sl'] = row.sleeper_id
             if not e.get('espn') and isinstance(row.espn_id, str): e['espn'] = row.espn_id
             if not e.get('yahoo') and isinstance(row.yahoo_id, str): e['yahoo'] = row.yahoo_id
+            if isinstance(row.pfr_id, str) and row.pfr_id:
+                pfr_to_gsis[row.pfr_id] = row.gsis_id
     except Exception as ex:
         print('db_playerids unavailable', ex)
     def _s(v):
@@ -434,6 +508,14 @@ def main():
         if isinstance(o, (np.integer,)): return int(o)
         return o
 
+    snaps = None
+    snap_path = D + 'snaps_2026.csv'
+    if os.path.exists(snap_path) and os.path.getsize(snap_path) > 0:
+        try:
+            snaps = pd.read_csv(snap_path, low_memory=False)
+        except Exception as ex:
+            print('snaps unavailable', ex)
+    print('snap implied', attach_snap_share(players, snaps, pfr_to_gsis, CUR_WEEK, DECAY))
     roles = build_roles(g, pd.read_csv(D + 'injuries_2026.csv'), D + 'depth_2026.csv', SEASON)
     print('role weeks', len(roles))
     adv, team_ctx, avail = build_advanced.build(CUR_WEEK, players, season=SEASON)

@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { lgamma, makeDist, project, normName, propMean, PREDICTIVE_SPREAD } = require('../site/model');
+const { lgamma, makeDist, project, normName, propMean, PREDICTIVE_SPREAD, SNAP_BLEND } = require('../site/model');
 
 function factors() {
   return { rush_att: 1, ypc: 1, rush_td: 1, pass_att: 1, comp_pct: 1, ypa: 1, pass_td: 1, int: 1 };
@@ -197,6 +197,31 @@ test('receiving yardage uses the position rate instead of the all-positions rate
   e.data.league_pos = { WR: { rec_yds_pg: 150, tgt_pg: 18, rec_td_pg: 0.9 } };
   const high = project(wr, 6, 'ppr', e);
   assert.ok(high.comps.rcy > low.comps.rcy, `${high.comps.rcy} vs ${low.comps.rcy}`);
+});
+
+test('a missing snap share leaves the projection unchanged', () => {
+  assert.equal(SNAP_BLEND, 0.35);
+  assert.equal(PREDICTIVE_SPREAD, 1.25);
+  const base = project(qb, 6, 'ppr', env());
+  const off = project(qb, 6, 'ppr', env({ tune: { snapBlend: 0 } }));
+  assert.equal(base.pts, off.pts);
+  assert.equal(base.comps.pa, off.comps.pa);
+});
+
+test('recent snap share moves thin usage toward the snap-implied rate', () => {
+  const thin = { ...qb, w: { ...qb.w, pa: 8 }, snapImplied: { pa: 32, ca: 2, tg: 0 } };
+  const raised = project(thin, 6, 'ppr', env());
+  const plain = project({ ...thin, snapImplied: null }, 6, 'ppr', env());
+  assert.ok(raised.comps.pa > plain.comps.pa + 4, `${raised.comps.pa} vs ${plain.comps.pa}`);
+  const frozen = project(thin, 6, 'ppr', env({ tune: { snapBlend: 0 } }));
+  assert.ok(Math.abs(frozen.comps.pa - plain.comps.pa) < 0.05, frozen.comps.pa);
+});
+
+test('snap share mixes after a charted starter inherits volume', () => {
+  const plain = project(darnold, 3, 'ppr', seaWeek(charted, [darnold, lock]));
+  const low = project({ ...darnold, snapImplied: { pa: 2, ca: 0, tg: 0 } }, 3, 'ppr', seaWeek(charted, [darnold, lock]));
+  assert.ok(low.comps.pa < plain.comps.pa, `${low.comps.pa} vs ${plain.comps.pa}`);
+  assert.ok(low.comps.pa > 8, low.comps.pa);
 });
 
 test('propMean stays available to the player page', () => {

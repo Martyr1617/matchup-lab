@@ -172,6 +172,10 @@
   const QB_CAP_PA = 8;
   const QB_BACKUP_PA = 2.5;
   const ROLE_DECAY = 0.7;
+  // Share of the usage line taken from recent offensive snap share. 0.35 is the
+  // only study change that lowered full-season error without leaving the
+  // calibrated range. The other knobs below stay at the previous model.
+  const SNAP_BLEND = 0.35;
   const THIN_VOLUME = { RB: ['ca', 6], WR: ['tg', 3.5], TE: ['tg', 3.5] };
   const idIndex = new WeakMap();
 
@@ -184,13 +188,38 @@
     return map;
   }
 
-  function priorWeighted(mate, week, key) {
-    const prior = (mate.log || []).filter(g => g.wk < week);
+  function tuneOf(env) {
+    const t = (env && env.tune) || {};
+    const num = (v, d) => v == null || !Number.isFinite(Number(v)) ? d : Number(v);
+    return {
+      effK: num(t.effK, 1),
+      posExp: num(t.posExp, 0.35),
+      posYExp: num(t.posYExp, 0.3),
+      vegasSkill: num(t.vegasSkill, 1),
+      pprBlend: num(t.pprBlend, 0),
+      backupPull: num(t.backupPull, 0),
+      snapBlend: num(t.snapBlend, SNAP_BLEND),
+      decay: num(t.decay, ROLE_DECAY),
+      perGame: !!t.perGame,
+    };
+  }
+
+  function priorGames(mate, week, perGame) {
+    const rows = (mate.log || []).filter(g => (g.prior ? perGame : false) || (!g.prior && g.wk < week));
+    rows.sort((a, b) => (a.ord || a.wk) - (b.ord || b.wk));
+    return rows;
+  }
+
+  function priorWeighted(mate, week, key, tune) {
+    const decay = tune && tune.decay != null ? tune.decay : ROLE_DECAY;
+    const perGame = !!(tune && tune.perGame);
+    const prior = priorGames(mate, week, perGame);
     if (!prior.length) return null;
     const cur = week - 1;
     let wsum = 0, acc = 0;
-    for (const g of prior) {
-      const wt = ROLE_DECAY ** (cur - g.wk);
+    for (let i = 0; i < prior.length; i++) {
+      const g = prior[i];
+      const wt = perGame ? decay ** (prior.length - 1 - i) : decay ** (cur - g.wk);
       wsum += wt;
       acc += wt * (Number(g[key]) || 0);
     }
@@ -211,7 +240,7 @@
 
   // Depth chart + injury report for this week. No roles in the file means the
   // published volume is used as-is, so an older data bundle still projects.
-  function roleVolume(pl, week, data) {
+  function roleVolume(pl, week, data, tune) {
     const w = { ...(pl.w || {}) };
     const roles = data.roles && data.roles[String(week)];
     if (!roles || !pl.team || pl.id == null) return w;
@@ -230,7 +259,7 @@
         for (const pid of chart) {
           if (pid === id) continue;
           const mate = mates.get(pid);
-          const pa = mate && priorWeighted(mate, week, 'pa');
+          const pa = mate && priorWeighted(mate, week, 'pa', tune);
           if (pa != null && pa > best) best = pa;
         }
         w.pa = best;
@@ -240,23 +269,33 @@
         // chart that still lists a benched quarterback first must not wipe
         // out the player who has actually been throwing.
         const starter = mates.get(chart[0]);
-        const starterPa = starter && priorWeighted(starter, week, 'pa');
+        const starterPa = starter && priorWeighted(starter, week, 'pa', tune);
         if (starterPa != null && starterPa < QB_INHERIT_PA) w.pa = QB_BACKUP_PA;
       }
-      return w;
+    } else {
+      const thin = THIN_VOLUME[pl.pos];
+      if (thin && id === active && (Number(w[thin[0]]) || 0) < thin[1]) {
+        const key = thin[0];
+        let best = Number(w[key]) || 0;
+        for (const pid of chart) {
+          if (pid === id || !ruledOut.has(pid)) continue;
+          const mate = mates.get(pid);
+          const v = mate && priorWeighted(mate, week, key, tune);
+          if (v != null && v > best) best = v;
+        }
+        w[key] = best;
+      }
     }
-    const thin = THIN_VOLUME[pl.pos];
-    if (!thin || id !== active) return w;
-    const [key, limit] = thin;
-    if ((Number(w[key]) || 0) >= limit) return w;
-    let best = Number(w[key]) || 0;
-    for (const pid of chart) {
-      if (pid === id || !ruledOut.has(pid)) continue;
-      const mate = mates.get(pid);
-      const v = mate && priorWeighted(mate, week, key);
-      if (v != null && v > best) best = v;
+    // Optional extra pull for a charted non-starter behind a healthy starter.
+    // The default is zero, which leaves published usage alone.
+    const pull = tune && tune.backupPull || 0;
+    if (pull > 0 && id !== active && !ruledOut.has(chart[0])) {
+      if (pl.pos === 'QB') w.pa = (Number(w.pa) || 0) * (1 - pull) + QB_BACKUP_PA * pull;
+      else {
+        const thin = THIN_VOLUME[pl.pos];
+        if (thin) w[thin[0]] = (Number(w[thin[0]]) || 0) * (1 - pull);
+      }
     }
-    w[key] = best;
     return w;
   }
 
@@ -267,31 +306,42 @@
     const home = game.home === pl.team, opp = home ? game.away : game.home;
     const def = D.defense[opp]; const F = def.factors;
     const homeAdj = home ? 1.02 : 0.98;
-    const w = roleVolume(pl, week, D), t = pl.t;
+    const o = tuneOf(env);
+    const k = n => n * o.effK;
+    const w = roleVolume(pl, week, D, o), t = pl.t;
+    // Snap share is attempts or targets at this position's volume-per-snap
+    // rate. No snap row means the published usage line is left alone.
+    if (o.snapBlend > 0 && pl.snapImplied) {
+      const b = o.snapBlend, s = pl.snapImplied;
+      const mix = (cur, nxt) => nxt == null ? cur : (1 - b) * (Number(cur) || 0) + b * nxt;
+      if (pl.pos === 'QB') w.pa = mix(w.pa, s.pa);
+      if (pl.pos === 'RB') { w.ca = mix(w.ca, s.ca); w.tg = mix(w.tg, s.tg); }
+      if (pl.pos === 'WR' || pl.pos === 'TE') w.tg = mix(w.tg, s.tg);
+    }
     const yptPrior = posPrior(D, pl.pos, 'rec_yds_pg', 'tgt_pg', L.ypt);
     const rctdPrior = posPrior(D, pl.pos, 'rec_td_pg', 'tgt_pg', L.rec_td_rate);
     const wx = weatherAdj(game, env.wx || {}), wp = wx.pass, wpHalf = Math.sqrt(wx.pass);
-    const posF = pw(def.pos_factors[pl.pos], 0.35);
-    const posYF = pw((def.pos_yds_factors || {})[pl.pos], 0.3);
+    const posF = pw(def.pos_factors[pl.pos], o.posExp);
+    const posYF = pw((def.pos_yds_factors || {})[pl.pos], o.posYExp);
 
     // Rushing
     const ca = w.ca * pw(F.rush_att, 0.4) * homeAdj * wx.rushAtt;
-    const ypc = blend(t.ry, t.ca, L.ypc, 60) * pw(F.ypc, 0.7) * (pl.pos === 'RB' ? posF : 1);
+    const ypc = blend(t.ry, t.ca, L.ypc, k(60)) * pw(F.ypc, 0.7) * (pl.pos === 'RB' ? posF : 1);
     const ry = ca * ypc;
-    const rtd = ca * blend(t.rtd, t.ca, L.rush_td_rate, 60) * pw(F.rush_td, 0.5) * (pl.pos === 'RB' ? posF : 1);
+    const rtd = ca * blend(t.rtd, t.ca, L.rush_td_rate, k(60)) * pw(F.rush_td, 0.5) * (pl.pos === 'RB' ? posF : 1);
     // Receiving
     const tg = w.tg * pw(F.pass_att, 0.4) * homeAdj * wpHalf;
-    const catchRate = Math.min(0.95, blend(t.rc, t.tg, L.comp_pct, 15) * pw(F.comp_pct, 0.5));
+    const catchRate = Math.min(0.95, blend(t.rc, t.tg, L.comp_pct, k(15)) * pw(F.comp_pct, 0.5));
     const rc = tg * catchRate;
-    const ypt = blend(t.rcy, t.tg, yptPrior, 25) * pw(F.ypa, 0.5) * posYF * (pl.pos !== 'RB' ? posF : 1) * wpHalf;
+    const ypt = blend(t.rcy, t.tg, yptPrior, k(25)) * pw(F.ypa, 0.5) * posYF * (pl.pos !== 'RB' ? posF : 1) * wpHalf;
     const rcy = tg * ypt;
-    const rctd = tg * blend(t.rctd, t.tg, rctdPrior, 50) * pw(F.pass_td, 0.5) * (pl.pos !== 'RB' ? posF : 1) * wpHalf;
+    const rctd = tg * blend(t.rctd, t.tg, rctdPrior, k(50)) * pw(F.pass_td, 0.5) * (pl.pos !== 'RB' ? posF : 1) * wpHalf;
     // Passing
     const pa = w.pa * pw(F.pass_att, 0.3) * homeAdj * wpHalf;
-    const ypa = blend(t.py, t.pa, L.ypa, 80) * pw(F.ypa, 0.6) * (pl.pos === 'QB' ? posF : 1) * wpHalf;
+    const ypa = blend(t.py, t.pa, L.ypa, k(80)) * pw(F.ypa, 0.6) * (pl.pos === 'QB' ? posF : 1) * wpHalf;
     const py = pa * ypa;
-    const ptd = pa * blend(t.ptd, t.pa, L.pass_td_rate, 80) * pw(F.pass_td, 0.5) * (pl.pos === 'QB' ? posF : 1) * wpHalf;
-    const intc = pa * blend(t.int, t.pa, L.int_rate, 100) * pw(F.int, 0.5) / wpHalf;
+    const ptd = pa * blend(t.ptd, t.pa, L.pass_td_rate, k(80)) * pw(F.pass_td, 0.5) * (pl.pos === 'QB' ? posF : 1) * wpHalf;
+    const intc = pa * blend(t.int, t.pa, L.int_rate, k(100)) * pw(F.int, 0.5) / wpHalf;
     const fl = (t.fl + 0.06 * 4) / (pl.g + 4) * wx.fl;
     const two = t.two / pl.g * 0.5;
 
@@ -305,9 +355,9 @@
     }
     // baseline (no opponent adjustment) for comparison
     const b = {
-      ca: w.ca, ry: w.ca * blend(t.ry, t.ca, L.ypc, 60), rtd: w.ca * blend(t.rtd, t.ca, L.rush_td_rate, 60),
-      tg: w.tg, rc: w.tg * Math.min(0.95, blend(t.rc, t.tg, L.comp_pct, 15)), rcy: w.tg * blend(t.rcy, t.tg, yptPrior, 25), rctd: w.tg * blend(t.rctd, t.tg, rctdPrior, 50),
-      pa: w.pa, py: w.pa * blend(t.py, t.pa, L.ypa, 80), ptd: w.pa * blend(t.ptd, t.pa, L.pass_td_rate, 80), int: w.pa * blend(t.int, t.pa, L.int_rate, 100), fl, two,
+      ca: w.ca, ry: w.ca * blend(t.ry, t.ca, L.ypc, k(60)), rtd: w.ca * blend(t.rtd, t.ca, L.rush_td_rate, k(60)),
+      tg: w.tg, rc: w.tg * Math.min(0.95, blend(t.rc, t.tg, L.comp_pct, k(15))), rcy: w.tg * blend(t.rcy, t.tg, yptPrior, k(25)), rctd: w.tg * blend(t.rctd, t.tg, rctdPrior, k(50)),
+      pa: w.pa, py: w.pa * blend(t.py, t.pa, L.ypa, k(80)), ptd: w.pa * blend(t.ptd, t.pa, L.pass_td_rate, k(80)), int: w.pa * blend(t.int, t.pa, L.int_rate, k(100)), fl, two,
     };
     const basePts = ptsOf(b);
 
@@ -324,14 +374,16 @@
     const vg = vegasFor(game, pl.team, week, env);
     let itt = null;
     if (vg) {
-      const passS = clamp(1 - 0.008 * vg.margin, 0.92, 1.08) * vg.paceF, rushS = clamp(1 + 0.008 * vg.margin, 0.92, 1.08) * vg.paceF;
-      for (const k of ['pa', 'py', 'ptd', 'int', 'tg', 'rc', 'rcy', 'rctd']) C[k] *= passS;
-      for (const k of ['ca', 'ry', 'rtd']) C[k] *= rushS;
+      const vw = pl.pos === 'QB' ? 1 : o.vegasSkill;
+      const damp = m => 1 + (m - 1) * vw;
+      const passS = damp(clamp(1 - 0.008 * vg.margin, 0.92, 1.08) * vg.paceF), rushS = damp(clamp(1 + 0.008 * vg.margin, 0.92, 1.08) * vg.paceF);
+      for (const key of ['pa', 'py', 'ptd', 'int', 'tg', 'rc', 'rcy', 'rctd']) C[key] *= passS;
+      for (const key of ['ca', 'ry', 'rtd']) C[key] *= rushS;
       const off = D.team_off[pl.team] || {}, lgP = leaguePts(env);
       const raw = (off.pts_pg || lgP) * ((def.allowed && def.allowed.pts_pg) || lgP) / lgP;
       const modelTP = 0.7 * raw + 0.3 * lgP;
       itt = { modelTP, f: clamp(vg.itt / modelTP, 0.7, 1.4) };
-      const tdF = Math.pow(itt.f, 0.5), ydF = Math.pow(itt.f, 0.2);
+      const tdF = damp(Math.pow(itt.f, 0.5)), ydF = damp(Math.pow(itt.f, 0.2));
       C.ptd *= tdF; C.rtd *= tdF; C.rctd *= tdF; C.py *= ydF; C.ry *= ydF; C.rcy *= ydF;
     }
     const modelPts = ptsOf(C);
@@ -359,8 +411,16 @@
         if (Math.abs(dlt) >= 2 && Math.abs(dlt) / Math.max(modelPts, 1) >= 0.15) diverge = dlt > 0 ? 'higher' : 'lower';
       }
     }
+    let pts = ptsOf(C);
+    // Equal-weight blend of the usage projection with trailing actual points.
+    // Components scale with the blend so the player page still adds up.
+    if (o.pprBlend > 0 && pl.trail != null && Number.isFinite(pl.trail) && pts > 0.5) {
+      const blended = (1 - o.pprBlend) * pts + o.pprBlend * pl.trail;
+      const sc = blended / pts;
+      for (const key of Object.keys(C)) C[key] *= sc;
+      pts = ptsOf(C);
+    }
     const comps = C;
-    const pts = ptsOf(C);
     const dist = makeDist(pts, pl.cv);
     const grade = matchupGrade(def, pl.pos);
     const bb = boomBust(pl.pos, S, dist);
@@ -368,5 +428,5 @@
       dist, grade, floor: dist.quantile(0.1), ceil: dist.quantile(0.9), p15: dist.pOver(15), p20: dist.pOver(20), reg: regFlag(pl) };
   }
 
-  return { SCORING, lgamma, gammaP, makeDist, PREDICTIVE_SPREAD, project, gameFor, weatherAdj, vegasFor, propsFor, propMean, boomBust, matchupGrade, normName, blend };
+  return { SCORING, lgamma, gammaP, makeDist, PREDICTIVE_SPREAD, SNAP_BLEND, project, gameFor, weatherAdj, vegasFor, propsFor, propMean, boomBust, matchupGrade, normName, blend };
 });
