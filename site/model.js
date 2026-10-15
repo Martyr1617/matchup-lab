@@ -177,6 +177,21 @@
   // calibrated range. The other knobs below stay at the previous model.
   const SNAP_BLEND = 0.35;
   const THIN_VOLUME = { RB: ['ca', 6], WR: ['tg', 3.5], TE: ['tg', 3.5] };
+  // Healthy-and-in-role floor. The 1.25 spread describes every week mixed
+  // together, including sits and early exits, and that is what makes a
+  // starter's bad week look negative. A starter who is actually expected to
+  // play uses a tighter spread measured on healthy games: about 1.05 QB,
+  // 1.00 RB, 0.95 WR, 0.85 TE. The number is that normal's 10th percentile,
+  // bounded at 0. A lognormal with the same spread put about 16% of healthy
+  // starter weeks under the floor, so the percentile stays on the normal.
+  // Sitting out, leaving hurt, or losing the role stays outside this floor.
+  const HEALTHY_SPREAD = { QB: 1.05, RB: 1.00, WR: 0.95, TE: 0.85 };
+  const ROLE_FLOOR_N = 12;
+  const HURT_STATUS = /^(q|questionable|doubtful|out|ir|injured reserve|injury reserve|pup|sus|suspended|suspension|na|cov)$/i;
+  // Volume and snap share below a starter's workload. These players keep the
+  // wider floor. Snap is optional; a missing share does not by itself make a role thin.
+  const ROLE_VOL = { QB: ['pa', 18], RB: ['ca', 8], WR: ['tg', 5.5], TE: ['tg', 4.5] };
+  const ROLE_SNAP = { QB: 0.6, RB: 0.4, WR: 0.58, TE: 0.55 };
   const idIndex = new WeakMap();
 
   function playersById(data) {
@@ -323,6 +338,75 @@
     return w;
   }
 
+  function hurtStatus(pl) {
+    const raw = (pl && pl.sl_inj && pl.sl_inj.status) || (pl && pl.inj && (pl.inj.status || pl.inj.st)) || '';
+    return HURT_STATUS.test(String(raw).trim());
+  }
+
+  function thinRole(pl) {
+    if (!pl || !ROLE_VOL[pl.pos]) return true;
+    const spec = ROLE_VOL[pl.pos];
+    const vol = Number(pl.w && pl.w[spec[0]]) || 0;
+    if (vol < spec[1]) return true;
+    const snap = pl.adv && Number(pl.adv.snap_pct);
+    return Number.isFinite(snap) && snap < ROLE_SNAP[pl.pos];
+  }
+
+  // 10th percentile. Healthy starters use the tighter spread. Everyone else
+  // keeps the 1.25 normal. Neither is shown below zero.
+  function outcomeFloor(mean, cv, pos, role) {
+    const m = Number.isFinite(mean) ? mean : 0;
+    const c = Number.isFinite(cv) ? cv : 0;
+    const spread = role ? (HEALTHY_SPREAD[pos] || PREDICTIVE_SPREAD) : PREDICTIVE_SPREAD;
+    const s = Math.max(Math.abs(m) * c * spread, role ? 0 : 0.5);
+    return Math.max(0, m + s * invNorm(0.1));
+  }
+
+  const roleRankCache = new WeakMap();
+
+  // Rank healthy, starting-level players by this week's projection. The first
+  // call projects the roster once; later calls reuse it. Ranking itself uses
+  // the wide floor so it cannot recurse.
+  function projectionRank(pl, week, scoringKey, env) {
+    const data = env && env.data;
+    if (!data || !data.players || pl.id == null) return null;
+    const scoreKey = typeof scoringKey === 'string' ? scoringKey : 'custom';
+    const key = String(week) + '|' + scoreKey;
+    let bucket = roleRankCache.get(data);
+    if (!bucket) { bucket = {}; roleRankCache.set(data, bucket); }
+    if (!bucket[key]) {
+      env._ranking = true;
+      const groups = { QB: [], RB: [], WR: [], TE: [] };
+      try {
+        for (const p of data.players) {
+          if (!groups[p.pos] || p.id == null) continue;
+          if (hurtStatus(p) || thinRole(p)) continue;
+          let pr;
+          try { pr = project(p, week, scoringKey, env); } catch (e) { continue; }
+          if (!pr || pr.bye || !(pr.pts > 0)) continue;
+          groups[p.pos].push({ id: String(p.id), pts: pr.pts });
+        }
+      } finally {
+        env._ranking = false;
+      }
+      const map = new Map();
+      for (const pos of Object.keys(groups)) {
+        groups[pos].sort((a, b) => (b.pts - a.pts) || (a.id < b.id ? -1 : 1));
+        groups[pos].forEach((row, i) => map.set(pos + ':' + row.id, i + 1));
+      }
+      bucket[key] = map;
+    }
+    return bucket[key].get(pl.pos + ':' + String(pl.id)) || null;
+  }
+
+  function usesRoleFloor(pl, week, scoringKey, env) {
+    if (!env || env._ranking || !env.data || !env.data.players) return false;
+    if (!pl || !HEALTHY_SPREAD[pl.pos]) return false;
+    if (hurtStatus(pl) || thinRole(pl)) return false;
+    const rank = projectionRank(pl, week, scoringKey, env);
+    return rank != null && rank <= ROLE_FLOOR_N;
+  }
+
   function project(pl, week, scoringKey, env) {
     const D = env.data, L = D.league, S = typeof scoringKey === 'object' ? scoringKey : SCORING[scoringKey];
     const game = gameFor(pl.team, week, D);
@@ -454,9 +538,11 @@
     const dist = makeDist(pts, pl.cv);
     const grade = matchupGrade(def, pl.pos);
     const bb = boomBust(pl.pos, S, dist);
+    const role = usesRoleFloor(pl, week, scoringKey, env);
     return { bye: false, wx, wxDelta, game, home, opp, def, comps, base: b, pts, basePts, modelPts, modelC, mktPts, diverge, pm, propUsed, vg, itt, bb,
-      dist, grade, floor: dist.quantile(0.1), ceil: dist.quantile(0.9), p15: dist.pOver(15), p20: dist.pOver(20), reg: regFlag(pl), defNote: inj.note };
+      dist, grade, floor: outcomeFloor(pts, pl.cv, pl.pos, role), ceil: dist.quantile(0.9), roleFloor: role,
+      p15: dist.pOver(15), p20: dist.pOver(20), reg: regFlag(pl), defNote: inj.note };
   }
 
-  return { SCORING, lgamma, gammaP, makeDist, PREDICTIVE_SPREAD, SNAP_BLEND, project, gameFor, weatherAdj, vegasFor, propsFor, propMean, boomBust, matchupGrade, normName, blend };
+  return { SCORING, lgamma, gammaP, makeDist, PREDICTIVE_SPREAD, SNAP_BLEND, HEALTHY_SPREAD, ROLE_FLOOR_N, project, outcomeFloor, hurtStatus, thinRole, gameFor, weatherAdj, vegasFor, propsFor, propMean, boomBust, matchupGrade, normName, blend };
 });

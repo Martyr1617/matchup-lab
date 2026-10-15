@@ -42,8 +42,8 @@
   window.MLThemeBoot = { appearance: appearance, team: team, mode: mode };
 })();
 </script>
-<link rel="stylesheet" href="styles.css?v=491192fdfd" />
-<link rel="stylesheet" href="themes.css?v=491192fdfd" />
+<link rel="stylesheet" href="styles.css?v=9ec471576d" />
+<link rel="stylesheet" href="themes.css?v=9ec471576d" />
 </head>
 <body>
 <div class="app">
@@ -278,7 +278,7 @@
         </article>
         <article class="card">
           <h2 class="card-title">Distribution, boom &amp; bust</h2>
-          <p>The weekly outcome is a normal distribution centered on the projection. Its spread starts from the player's week-to-week volatility blended with a position prior, then widens by 1.25×. The floor is a bad-week score the player finishes below about 10% of the time. The ceiling is a great-week score they top about 10% of the time, so roughly 80% of weeks land between them. Scores can be negative, which a gamma could not represent.</p>
+          <p>The weekly outcome is a normal distribution centered on the projection. Its spread starts from the player's week-to-week volatility blended with a position prior, then widens by 1.25×. The ceiling is a great-week score the player tops about 10% of the time. The displayed floor is never below zero. A healthy starter's floor is a bad week in his normal role, using a tighter spread (1.05 for quarterbacks, 1.00 for running backs, 0.95 for receivers, 0.85 for tight ends). Questionable, doubtful, thin-role, and backup players keep the wider floor. Sitting out or leaving hurt is a separate risk, not part of that starter floor.</p>
           <div class="mp" style="margin-top:var(--space-3)">Boom and bust thresholds in PPR:
           <ul>
             <li>QB: boom 25+, bust under 12</li>
@@ -333,14 +333,14 @@
   </div>
 </div>
 
-<script>window.ML_VER="491192fdfd";</script>
-<script src="chart.umd.min.js?v=491192fdfd"></script>
-<script src="lineup.js?v=491192fdfd"></script>
-<script src="team.js?v=491192fdfd"></script>
-<script src="glossary.js?v=491192fdfd"></script>
-<script src="model.js?v=491192fdfd"></script>
-<script src="trade.js?v=491192fdfd"></script>
-<script src="app.js?v=491192fdfd"></script>
+<script>window.ML_VER="9ec471576d";</script>
+<script src="chart.umd.min.js?v=9ec471576d"></script>
+<script src="lineup.js?v=9ec471576d"></script>
+<script src="team.js?v=9ec471576d"></script>
+<script src="glossary.js?v=9ec471576d"></script>
+<script src="model.js?v=9ec471576d"></script>
+<script src="trade.js?v=9ec471576d"></script>
+<script src="app.js?v=9ec471576d"></script>
 <script>
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
 </script>

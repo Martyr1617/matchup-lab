@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { lgamma, makeDist, project, normName, propMean, PREDICTIVE_SPREAD, SNAP_BLEND } = require('../site/model');
+const { lgamma, makeDist, project, normName, propMean, PREDICTIVE_SPREAD, SNAP_BLEND, outcomeFloor, HEALTHY_SPREAD, ROLE_FLOOR_N } = require('../site/model');
 
 function factors() {
   return { rush_att: 1, ypc: 1, rush_td: 1, pass_att: 1, comp_pct: 1, ypa: 1, pass_td: 1, int: 1 };
@@ -247,4 +247,48 @@ test('missing defenders do not change the opponent factor unless the adjustment 
 test('propMean stays available to the player page', () => {
   assert.equal(propMean({ line: 100, p_over: 0.5 }, true), 105);
   assert.equal(propMean({ line: 20 }, false), 20);
+});
+
+test('the displayed floor stays at or above zero, and only a healthy starter uses the tighter spread', () => {
+  assert.equal(PREDICTIVE_SPREAD, 1.25);
+  assert.equal(ROLE_FLOOR_N, 12);
+  assert.deepEqual(HEALTHY_SPREAD, { QB: 1.05, RB: 1, WR: 0.95, TE: 0.85 });
+  const z = -1.2815515655446004;
+  assert.equal(outcomeFloor(6.93, 0.749, 'WR', false), 0);
+  const role = 19 + 19 * 0.808 * HEALTHY_SPREAD.WR * z;
+  assert.ok(Math.abs(outcomeFloor(19, 0.808, 'WR', true) - Math.max(0, role)) < 1e-6);
+  assert.ok(outcomeFloor(24.8, 0.37, 'QB', true) > outcomeFloor(24.8, 0.37, 'QB', false));
+
+  const skill = (id, extra) => ({
+    id, name: id, pos: 'WR', team: 'BUF', g: 5, cv: 0.8,
+    w: { pa: 0, py: 0, ptd: 0, int: 0, ca: 0, ry: 0, rtd: 0, tg: 9, rc: 6, rcy: 80, rctd: 0.4 },
+    t: { pa: 0, py: 0, ptd: 0, int: 0, ca: 0, ry: 0, rtd: 0, tg: 45, rc: 30, rcy: 400, rctd: 2, fl: 0, two: 0 },
+    adv: { snap_pct: 0.8 },
+    ...extra,
+  });
+  const star = skill('star');
+  const questionable = skill('q', { sl_inj: { status: 'Questionable', body: 'Foot' }, cv: 0.75 });
+  const thin = skill('thin', {
+    cv: 0.9,
+    adv: { snap_pct: 0.4 },
+    w: { pa: 0, py: 0, ptd: 0, int: 0, ca: 0, ry: 0, rtd: 0, tg: 3, rc: 2, rcy: 20, rctd: 0 },
+  });
+  const e = env();
+  e.data.players = [star, questionable, thin];
+  const played = project(star, 6, 'ppr', e);
+  const tagged = project(questionable, 6, 'ppr', e);
+  const backup = project(thin, 6, 'ppr', e);
+  const alone = project(star, 6, 'ppr', env());
+  assert.equal(played.roleFloor, true);
+  assert.equal(played.pts, alone.pts);
+  assert.equal(played.ceil, alone.ceil);
+  assert.equal(played.ceil, played.dist.quantile(0.9));
+  assert.equal(played.pts, played.dist.mean);
+  assert.ok(played.floor > alone.floor && played.floor < played.pts);
+  assert.equal(tagged.roleFloor, false);
+  assert.equal(tagged.floor, 0);
+  assert.ok(tagged.dist.quantile(0.1) < 0);
+  assert.equal(backup.roleFloor, false);
+  assert.ok(Math.abs(backup.floor - Math.max(0, backup.dist.quantile(0.1))) < 1e-6);
+  assert.ok(Math.abs(alone.floor - Math.max(0, alone.dist.quantile(0.1))) < 1e-6);
 });

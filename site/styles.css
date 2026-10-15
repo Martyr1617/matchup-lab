@@ -259,6 +259,7 @@ tbody tr:last-child td { border-bottom: 0; }
 .proj-hero .rng-meta { color: var(--color-text-muted); font-weight: 500; }
 .band { display: inline-flex; align-items: baseline; gap: 6px; padding: 4px 10px; border-radius: 999px; font-weight: 700; }
 .band.floor { background: color-mix(in oklab, var(--color-floor) 16%, transparent); color: var(--color-floor); }
+.band.floor .term:hover, .band.floor .term:focus-visible { color: inherit; }
 .band.ceil { background: color-mix(in oklab, var(--color-ceil) 18%, transparent); color: var(--color-ceil); }
 .band b { font-variant-numeric: tabular-nums; }
 .grid-2 { display: grid; grid-template-columns: 1.4fr 1fr; gap: var(--space-5); margin-bottom: var(--space-5); }
