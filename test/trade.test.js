@@ -111,9 +111,14 @@ test('published values sit on a 0–100 scale with scarcity and injury', () => {
   }
   const best = Math.max(...skill.map(p => p.tv.v.ppr.qb1[0]));
   assert.equal(best, 100);
+  assert.equal(data.meta.trade.v, 3);
+  assert.equal(data.meta.trade.slots.qb1.QB, 20);
+  assert.equal(data.meta.trade.slots.sflex.QB, 32);
   const below = skill.filter(p => p.tv.par.ppr.qb1[0] <= 0);
   assert.ok(below.length > 0);
-  assert.ok(below.every(p => p.tv.v.ppr.qb1[0] <= 8));
+  const above = skill.filter(p => p.tv.par.ppr.qb1[0] > 0);
+  const worstAbove = Math.min(...above.map(p => p.tv.v.ppr.qb1[0]));
+  assert.ok(below.every(p => p.tv.v.ppr.qb1[0] <= worstAbove));
 
   const ir = skill.find(p => p.tv.season && p.tv.base && p.tv.base[0] >= 12);
   assert.ok(ir, 'a season-ending star keeps a baseline');
@@ -179,6 +184,54 @@ test('IR timelines keep a return and an ACL is a redraft zero', () => {
   assert.equal(acl.eq, 0);
   assert.equal(trade.parseNews('designated to return in week 12').returnWeek, 12);
   assert.equal(trade.parseNews('dealing with a sore knee').long, undefined);
+});
+
+test('the value curve stays smooth and a better quarterback ranks higher', () => {
+  assert.equal(trade.CURVE_T, 20);
+  assert.equal(trade.SLOTS.qb1.QB, 20);
+  assert.equal(trade.SLOTS.sflex.QB, 32);
+  let prev = -Infinity;
+  for (let s = -80; s <= 160; s += 1) {
+    const y = trade.curve(s);
+    assert.ok(y > prev, 'curve step at ' + s);
+    prev = y;
+  }
+  const step = s => trade.curve(s) - trade.curve(s - 1);
+  assert.ok(Math.abs(step(0) - step(1)) < 0.05);
+
+  const skill = data.players.filter(p => /^(QB|RB|WR|TE)$/.test(p.pos) && p.tv);
+  for (const mode of ['qb1', 'sflex']) {
+    for (const hi of [0, 1]) {
+      for (const pos of ['QB', 'RB', 'WR', 'TE']) {
+        const rows = skill.filter(p => p.pos === pos).sort((a, b) => b.tv.par.ppr[mode][hi] - a.tv.par.ppr[mode][hi]);
+        for (let i = 1; i < rows.length; i++) {
+          if (rows[i - 1].tv.par.ppr[mode][hi] <= rows[i].tv.par.ppr[mode][hi]) continue;
+          assert.ok(rows[i - 1].tv.v.ppr[mode][hi] >= rows[i].tv.v.ppr[mode][hi], rows[i].name + ' outranks a better ' + pos);
+        }
+      }
+    }
+  }
+
+  const avg = (rows, mode) => rows.reduce((s, p) => s + p.tv.v.ppr[mode][0], 0) / rows.length;
+  const qbs = skill.filter(p => p.pos === 'QB').sort((a, b) => b.tv.ros[0] - a.tv.ros[0]);
+  const rbs = skill.filter(p => p.pos === 'RB').sort((a, b) => b.tv.ros[0] - a.tv.ros[0]).slice(5, 12);
+  const wrs = skill.filter(p => p.pos === 'WR').sort((a, b) => b.tv.ros[0] - a.tv.ros[0]).slice(5, 12);
+  const qAvg = avg(qbs.slice(0, 5), 'qb1');
+  const mid = avg(rbs.concat(wrs), 'qb1');
+  assert.ok(qAvg > mid * 0.6 && qAvg < mid * 1.25, 'top QB ' + qAvg.toFixed(1) + ' mid skill ' + mid.toFixed(1));
+
+  const sf = skill.slice().sort((a, b) => b.tv.v.ppr.sflex[0] - a.tv.v.ppr.sflex[0]);
+  const sfQ = sf.filter(p => p.pos === 'QB').slice(0, 3);
+  for (const q of sfQ) {
+    const rank = sf.findIndex(p => p.id === q.id);
+    assert.ok(rank >= 0 && rank < 15, q.name + ' superflex rank ' + (rank + 1));
+  }
+  const starters = skill.filter(p => p.pos === 'QB' && p.tv.starter);
+  assert.equal(new Set(starters.map(p => p.team)).size, 32);
+  for (const q of starters) {
+    assert.ok(q.tv.v.ppr.qb1[0] > 0, q.name + ' 1QB');
+    assert.ok(q.tv.v.ppr.sflex[0] > q.tv.v.ppr.qb1[0], q.name + ' superflex');
+  }
 });
 
 test('starters and injured stars stay searchable', () => {

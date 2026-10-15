@@ -30,15 +30,19 @@
    Value = that per-game rate × expected games remaining. The card shows the
    value before and after the injury discount.
 
-   Scarcity is the replacement line for a 12-team league:
-     1QB:     QB12, RB30, WR36, TE12
-     Superflex: QB24, RB30, WR36, TE12
-     (RB30 and WR36 stand in for two starters plus the flex.)
-     Points above replacement = player − the last starter at that position.
-     The 0–100 scale divides by the largest positive surplus in that
-     scoring / quarterback / horizon setting. A player at or below
-     replacement keeps a fallback of at most 8, proportional to how close
-     their points are to the replacement line.
+   Scarcity is a positional baseline, not a hard cutoff:
+     1QB:       QB20, RB30, WR36, TE12
+     Superflex: QB32, RB30, WR36, TE12
+     QB20 is a streaming quarterback, so a top 1QB quarterback is worth a
+     mid-tier RB1 or WR1 and no more. QB32 is deep enough that superflex
+     quarterbacks carry real value and the elites sit with the top skill
+     players. RB30 and WR36 stand in for two starters plus the flex.
+     Surplus = projected points − that baseline (it may be negative).
+     The value curve is a softplus, T × ln(1 + exp(surplus / T)), T = 20.
+     Clear of the baseline it is linear in surplus. Below the baseline it
+     eases toward zero and keeps rising with projected points, so a better
+     player is never worth less than a worse one. The 0–100 scale divides
+     by the largest curve value in that scoring, format, and horizon.
 
    Dynasty is 60% rest-of-season (after the injury discount) and 40% a
    next-season outlook: healthy points per game × 17 × age curve × role
@@ -69,15 +73,15 @@
   const SCORINGS = ['ppr', 'half', 'std'];
   const QB_MODES = ['qb1', 'sflex'];
   const SLOTS = {
-    qb1: { QB: 12, RB: 30, WR: 36, TE: 12 },
-    sflex: { QB: 24, RB: 30, WR: 36, TE: 12 },
+    qb1: { QB: 20, RB: 30, WR: 36, TE: 12 },
+    sflex: { QB: 32, RB: 30, WR: 36, TE: 12 },
   };
   const DYNASTY_ROS = 0.6;
   const DYNASTY_NEXT = 0.4;
   const CONSOLIDATION = 0.04;
   const CONSOLIDATION_CAP = 0.12;
   const TOP_N = 150;
-  const FALLBACK_CAP = 8;
+  const CURVE_T = 20;
   const SEASON_WEEKS = 17;
 
   const AGE_CURVE = {
@@ -314,10 +318,18 @@
     return sorted[Math.max(0, idx)].pts;
   }
 
-  function scaled(par, points, replacement, maxPar) {
-    if (par > 0 && maxPar > 0) return round1(100 * par / maxPar);
-    if (points > 0 && replacement > 0) return round1(Math.min(FALLBACK_CAP, FALLBACK_CAP * points / replacement));
-    return 0;
+  function curve(surplus) {
+    const x = surplus / CURVE_T;
+    let sp;
+    if (x > 30) sp = x;
+    else if (x < -30) sp = Math.exp(x);
+    else sp = Math.log(1 + Math.exp(x));
+    return CURVE_T * sp;
+  }
+
+  function scaled(surplus, maxCurve) {
+    if (!(maxCurve > 0)) return 0;
+    return round1(Math.min(100, 100 * curve(surplus) / maxCurve));
   }
 
   function spearman(xs, ys) {
@@ -442,9 +454,9 @@
           for (const row of rows) {
             const pts = measure(row, key, mode, horizon);
             const line = (repl[key][mode][row.pl.pos] || [0, 0])[hi];
-            max = Math.max(max, pts - line);
+            max = Math.max(max, curve(pts - line));
           }
-          maxPar[key][mode][hi] = round1(max);
+          maxPar[key][mode][hi] = max;
         }
       }
     }
@@ -464,7 +476,7 @@
             const line = (repl[key][mode][row.pl.pos] || [0, 0])[hi];
             const surplus = pts - line;
             packP.push(round1(surplus));
-            packV.push(scaled(surplus, pts, line, maxPar[key][mode][hi]));
+            packV.push(scaled(surplus, maxPar[key][mode][hi]));
           }
           v[key][mode] = packV;
           par[key][mode] = packP;
@@ -479,7 +491,7 @@
             const hi = horizon === 'redraft' ? 0 : 1;
             const pts = measureHealthy(row, key, mode, horizon);
             const line = (repl[key][mode][row.pl.pos] || [0, 0])[hi];
-            pack.push(scaled(pts - line, pts, line, maxPar[key][mode][hi]));
+            pack.push(scaled(pts - line, maxPar[key][mode][hi]));
           }
           pre[key][mode] = pack;
         }
@@ -505,14 +517,21 @@
     ranked.forEach((pl, i) => { pl.tv.top = i < TOP_N; });
 
     data.meta = data.meta || {};
+    const maxOut = { ppr: blank(), half: blank(), std: blank() };
+    for (const key of SCORINGS) {
+      for (const mode of QB_MODES) {
+        maxOut[key][mode] = maxPar[key][mode].map(round1);
+      }
+    }
     data.meta.trade = {
-      v: 2,
+      v: 3,
       top: TOP_N,
       slots: SLOTS,
+      curve: { t: CURVE_T },
       dynasty: [DYNASTY_ROS, DYNASTY_NEXT],
       consolidation: CONSOLIDATION,
       cap: CONSOLIDATION_CAP,
-      max: maxPar,
+      max: maxOut,
       repl,
     };
     return data;
@@ -543,10 +562,7 @@
     const now = availability(tv.g, miss);
     const factor = built > 0 ? now / built : 0;
     if (hi === 1) return round1(base * (DYNASTY_ROS * factor + DYNASTY_NEXT));
-    const surplus = (tv.par[scoring][mode][0] || 0) * factor;
-    const max = opts && opts.max != null ? opts.max : surplus;
-    if (surplus <= 0) return round1(Math.min(base, FALLBACK_CAP) * factor);
-    return round1(max > 0 ? Math.min(100, 100 * surplus / max) : 0);
+    return round1(base * factor);
   }
 
   function adjustSide(raw, count, otherCount) {
@@ -869,7 +885,8 @@
   }
 
   return {
-    SCORINGS, QB_MODES, SLOTS, DYNASTY_ROS, DYNASTY_NEXT, CONSOLIDATION, CONSOLIDATION_CAP, TOP_N, FALLBACK_CAP, AGE_CURVE, PREF,
+    SCORINGS, QB_MODES, SLOTS, DYNASTY_ROS, DYNASTY_NEXT, CONSOLIDATION, CONSOLIDATION_CAP, TOP_N, CURVE_T, AGE_CURVE, PREF,
+    curve, scaled,
     missFromText, statusMiss, newsMiss, combineMiss, availability, ageFactor, roleFactor, teamFactor, pointsOf,
     gamesBasis, gameEq, parseNews, injuryPlan, sumOutlook, IR_MIN, LONG_DYNASTY,
     ageFromBirth, spearman, adjustSide, gradeGap, analyze, valueOf, attachTrade, backtest, round1,
