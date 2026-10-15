@@ -201,7 +201,31 @@
       snapBlend: num(t.snapBlend, SNAP_BLEND),
       decay: num(t.decay, ROLE_DECAY),
       perGame: !!t.perGame,
+      // Left at 0. A capped pregame bump for missing defenders did not beat
+      // the opponent factor on the 2024, 2025, or 2026 walk-forward.
+      defInj: num(t.defInj, 0),
+      defInjCap: num(t.defInjCap, 0.05),
+      defQ: num(t.defQ, 0.25),
+      defLevel: !!t.defLevel,
     };
+  }
+
+  // Pregame shock: this week's missing share minus the share already missing
+  // in earlier games. Pass defense moves QB/WR/TE; run defense moves RB.
+  // The multiplier is capped so one cluster of injuries cannot rewrite the line.
+  function defenseInjury(env, team, week, o) {
+    const none = { pass: 1, run: 1, note: null };
+    if (!o || !(o.defInj > 0) || !team) return none;
+    const table = env && env.data && env.data.def_avail;
+    const row = table && table[String(week)] && table[String(week)][team];
+    if (!row) return none;
+    const q = o.defQ;
+    const miss = (unit) => (Number(row[unit + '_out']) || 0) + (Number(row[unit + '_doubt']) || 0) + q * (Number(row[unit + '_q']) || 0);
+    const base = (unit) => o.defLevel ? 0 : ((Number(row[unit + '_out_base']) || 0) + (Number(row[unit + '_doubt_base']) || 0) + q * (Number(row[unit + '_q_base']) || 0));
+    const mul = (unit) => clamp(1 + o.defInj * (miss(unit) - base(unit)), 1 - o.defInjCap, 1 + o.defInjCap);
+    const pass = mul('pass'), run = mul('run');
+    const note = (pass !== 1 || run !== 1) && row.names && row.names.length ? row.names.slice(0, 3).join(', ') : null;
+    return { pass, run, note };
   }
 
   function priorGames(mate, week, perGame) {
@@ -321,8 +345,14 @@
     const yptPrior = posPrior(D, pl.pos, 'rec_yds_pg', 'tgt_pg', L.ypt);
     const rctdPrior = posPrior(D, pl.pos, 'rec_td_pg', 'tgt_pg', L.rec_td_rate);
     const wx = weatherAdj(game, env.wx || {}), wp = wx.pass, wpHalf = Math.sqrt(wx.pass);
-    const posF = pw(def.pos_factors[pl.pos], o.posExp);
-    const posYF = pw((def.pos_yds_factors || {})[pl.pos], o.posYExp);
+    let posF = pw(def.pos_factors[pl.pos], o.posExp);
+    let posYF = pw((def.pos_yds_factors || {})[pl.pos], o.posYExp);
+    const inj = defenseInjury(env, opp, week, o);
+    if (pl.pos === 'RB') posF *= inj.run;
+    else {
+      posF *= inj.pass;
+      if (pl.pos === 'WR' || pl.pos === 'TE') posYF *= inj.pass;
+    }
 
     // Rushing
     const ca = w.ca * pw(F.rush_att, 0.4) * homeAdj * wx.rushAtt;
@@ -425,7 +455,7 @@
     const grade = matchupGrade(def, pl.pos);
     const bb = boomBust(pl.pos, S, dist);
     return { bye: false, wx, wxDelta, game, home, opp, def, comps, base: b, pts, basePts, modelPts, modelC, mktPts, diverge, pm, propUsed, vg, itt, bb,
-      dist, grade, floor: dist.quantile(0.1), ceil: dist.quantile(0.9), p15: dist.pOver(15), p20: dist.pOver(20), reg: regFlag(pl) };
+      dist, grade, floor: dist.quantile(0.1), ceil: dist.quantile(0.9), p15: dist.pOver(15), p20: dist.pOver(20), reg: regFlag(pl), defNote: inj.note };
   }
 
   return { SCORING, lgamma, gammaP, makeDist, PREDICTIVE_SPREAD, SNAP_BLEND, project, gameFor, weatherAdj, vegasFor, propsFor, propMean, boomBust, matchupGrade, normName, blend };

@@ -522,6 +522,13 @@ def main():
     for pl in players:
         pl['adv'] = adv.get(pl['id'])
     print('adv players', sum(1 for pl in players if pl.get('adv')), 'avail', avail)
+    def_avail = {}
+    try:
+        import build_defense
+        def_avail = build_defense.build_week_availability(D, SEASON, NEXT_WEEK)
+        print('defense availability weeks', len(def_avail))
+    except Exception as ex:
+        print('defense availability unavailable', ex)
     out = {
         'meta': {'season': SEASON, 'last_completed_week': CUR_WEEK, 'next_week': NEXT_WEEK,
                  'generated': pd.Timestamp.now('UTC').strftime('%Y-%m-%d %H:%M UTC'), 'injury_week': latest_inj_week,
@@ -529,7 +536,7 @@ def main():
         'league': clean(lg), 'league_pos': clean(lg_pos),
         'team_names': TEAM_NAMES, 'team_off': clean(team_off), 'defense': clean(defense),
         'schedule': schedule, 'players': clean(players), 'sl_extra': sl_extra, 'roles': roles,
-        'team_ctx': clean(team_ctx), 'avail': avail,
+        'team_ctx': clean(team_ctx), 'avail': avail, 'def_avail': def_avail,
     }
     with open('site/data.json', 'w') as f:
         json.dump(out, f, separators=(',', ':'))

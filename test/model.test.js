@@ -224,6 +224,26 @@ test('snap share mixes after a charted starter inherits volume', () => {
   assert.ok(low.comps.pa > 8, low.comps.pa);
 });
 
+test('missing defenders do not change the opponent factor unless the adjustment is on', () => {
+  const e = env();
+  e.data.def_avail = { 6: { NYJ: { pass_out: 0.25, pass_out_base: 0, run_out: 0, run_out_base: 0, names: ['Sauce Gardner'] } } };
+  const off = project(qb, 6, 'ppr', e);
+  const plain = project(qb, 6, 'ppr', env());
+  assert.equal(off.pts, plain.pts);
+  assert.equal(off.defNote, null);
+  const on = project(qb, 6, 'ppr', { ...e, tune: { defInj: 0.5, defInjCap: 0.08, defQ: 0 } });
+  assert.ok(on.pts > off.pts + 0.2, `${on.pts} vs ${off.pts}`);
+  assert.equal(on.defNote, 'Sauce Gardner');
+  const rb = {
+    ...qb, id: 'rb1', name: 'James Cook', pos: 'RB',
+    w: { ...qb.w, pa: 0, py: 0, ptd: 0, ca: 14, ry: 60, rtd: 0.3 },
+    t: { ...qb.t, pa: 0, py: 0, ptd: 0, ca: 70, ry: 300, rtd: 2 },
+  };
+  const rbOff = project(rb, 6, 'ppr', e);
+  const rbOn = project(rb, 6, 'ppr', { ...e, tune: { defInj: 0.5, defInjCap: 0.08, defQ: 0 } });
+  assert.ok(Math.abs(rbOn.pts - rbOff.pts) < 0.05, `${rbOn.pts} vs ${rbOff.pts}`);
+});
+
 test('propMean stays available to the player page', () => {
   assert.equal(propMean({ line: 100, p_over: 0.5 }, true), 105);
   assert.equal(propMean({ line: 20 }, false), 20);
