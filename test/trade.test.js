@@ -261,6 +261,52 @@ test('starters and injured stars stay searchable', () => {
   assert.match(src, /tv\.starter/);
 });
 
+test('make it fairer names a role on the side that is behind', () => {
+  assert.equal(trade.tierOf('QB', 13), 'QB2');
+  assert.equal(trade.tierOf('RB', 24), 'RB2');
+  assert.equal(trade.tierOf('WR', 25), 'WR3');
+  assert.equal(trade.tierOf('TE', 6), 'TE1');
+  const pool = [];
+  for (let i = 1; i <= 36; i++) pool.push({ id: 'w' + i, name: 'WR ' + i, pos: 'WR', value: 80 - i, inj: '' });
+  for (let i = 1; i <= 12; i++) pool.push({ id: 't' + i, name: 'TE ' + i, pos: 'TE', value: 40 - i, inj: i === 6 ? 'IR · Ankle' : '' });
+  const even = trade.fairer(
+    [{ id: 'a', name: 'A', pos: 'RB', value: 50 }],
+    [{ id: 'b', name: 'B', pos: 'WR', value: 54 }],
+    pool
+  );
+  assert.equal(even.fair, true);
+  assert.equal(even.note, 'This looks fair');
+  assert.equal(even.suggestions.length, 0);
+
+  const a = [{ id: 'star', name: 'Star', pos: 'WR', value: 100 }];
+  const b = [{ id: 'low', name: 'Low', pos: 'RB', value: 40 }];
+  const lop = trade.fairer(a, b, pool);
+  assert.equal(lop.behind, 'b');
+  assert.ok(lop.need >= 55 && lop.need <= 60, 'need ' + lop.need);
+  const adds = lop.suggestions.filter(s => s.kind === 'add');
+  assert.ok(adds.length >= 2 && adds.length <= 4);
+  assert.ok(adds.every(s => s.side === 'b'));
+  assert.ok(adds.every(s => !/Side A/.test(s.text)));
+  const examples = adds.flatMap(s => s.examples);
+  assert.ok(examples.length >= 1);
+  assert.ok(examples.every(p => p.id !== 'star' && p.id !== 'low'));
+  for (const p of examples) {
+    const g = trade.analyze(a, b.concat(p));
+    assert.ok(g.pct <= 0.12, p.name + ' ' + g.grade);
+    assert.ok(g.grade === 'A+' || g.grade === 'A' || g.grade === 'B');
+  }
+
+  const hurtPool = pool.map(p => ({ ...p, inj: 'IR · Knee' }));
+  const hurt = trade.fairer(a, b, hurtPool);
+  const flagged = hurt.suggestions.flatMap(s => s.examples);
+  assert.ok(flagged.length);
+  assert.ok(flagged.every(p => p.inj === 'IR · Knee'));
+
+  const full = trade.fairer(a, [1, 2, 3, 4, 5].map(i => ({ id: 'b' + i, name: 'B' + i, pos: 'RB', value: 8 })), pool);
+  assert.equal(full.suggestions.filter(s => s.kind === 'add').length, 0);
+  assert.match(full.note, /5 players/);
+});
+
 test('the trade tab, prefs, and cache name the new script', () => {
   const html = fs.readFileSync(path.join(site, 'index.html'), 'utf8');
   const sw = fs.readFileSync(path.join(site, 'sw.js'), 'utf8');
