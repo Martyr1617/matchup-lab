@@ -637,6 +637,178 @@
     };
   }
 
+  // 12-team role bands from current value, not from season rank.
+  const ROLE_CUTS = { QB: [12, 24], RB: [12, 24, 36], WR: [12, 24, 36], TE: [12, 24] };
+
+  function tierOf(pos, rank) {
+    const cuts = ROLE_CUTS[pos];
+    if (!cuts || !rank) return '';
+    for (let i = 0; i < cuts.length; i++) if (rank <= cuts[i]) return pos + (i + 1);
+    return '';
+  }
+
+  function roleArticle(label) {
+    return /^rb/i.test(label) ? 'an' : 'a';
+  }
+
+  function rankPool(pool) {
+    const rows = (pool || []).filter(p => p && p.id != null && p.pos && Number.isFinite(Number(p.value))).map(p => ({ ...p, value: num(p.value) }));
+    const by = {};
+    for (const p of rows) (by[p.pos] || (by[p.pos] = [])).push(p);
+    for (const pos of Object.keys(by)) {
+      by[pos].sort((a, b) => b.value - a.value || String(a.id).localeCompare(String(b.id)));
+      by[pos].forEach((p, i) => {
+        p.rank = i + 1;
+        p.tier = tierOf(pos, p.rank);
+        p.mid = pos === 'TE' && p.rank >= 5 && p.rank <= 8;
+      });
+    }
+    return rows;
+  }
+
+  // Smallest value that, added to `behind`, gets the grade to A (within 8%).
+  // The search uses analyze(), so the depth discount is included.
+  function valueNeeded(sideA, sideB, behind) {
+    let lo = 0, hi = 160, best = null;
+    for (let i = 0; i < 24; i++) {
+      const mid = (lo + hi) / 2;
+      const ghost = { id: '__gap__', name: 'piece', pos: 'WR', value: mid };
+      const next = behind === 'a' ? analyze(sideA.concat(ghost), sideB) : analyze(sideA, sideB.concat(ghost));
+      const covers = !next.empty && next.pct <= 0.08;
+      const over = !next.empty && (next.winner === behind || next.winner === 'even');
+      if (covers) { best = mid; hi = mid; }
+      else if (over) hi = mid;
+      else lo = mid;
+    }
+    if (best == null) return null;
+    const shown = Math.ceil(best * 10 - 1e-9) / 10;
+    return shown;
+  }
+
+  function land(sideA, sideB) {
+    const g = analyze(sideA, sideB);
+    if (g.empty || g.pct > 0.12) return null;
+    return g;
+  }
+
+  function fairer(sideA, sideB, pool) {
+    const result = analyze(sideA, sideB);
+    const out = { fair: false, grade: result.grade, behind: null, need: null, suggestions: [], note: '' };
+    if (result.empty) return out;
+    if (result.pct <= 0.08) return { ...out, fair: true, note: 'This looks fair' };
+    const behind = result.winner === 'a' ? 'b' : 'a';
+    const ahead = behind === 'a' ? 'b' : 'a';
+    out.behind = behind;
+    const ranked = rankPool(pool);
+    const byId = new Map(ranked.map(p => [p.id, p]));
+    const taken = new Set(result.a.players.concat(result.b.players).map(p => p.id));
+    const free = ranked.filter(p => !taken.has(p.id) && p.value > 0 && p.tier);
+    const sideRows = { a: result.a.players, b: result.b.players };
+    const full = sideRows[behind].length >= 5;
+    out.need = full ? null : valueNeeded(sideRows.a, sideRows.b, behind);
+
+    const groups = new Map();
+    for (const p of free) {
+      if (!groups.has(p.tier)) groups.set(p.tier, []);
+      groups.get(p.tier).push(p);
+      if (p.mid) {
+        if (!groups.has('mid TE1')) groups.set('mid TE1', []);
+        groups.get('mid TE1').push(p);
+      }
+    }
+
+    function pack(p, g) {
+      return { id: p.id, name: p.name, pos: p.pos, value: p.value, inj: p.inj || '', grade: g.grade, gap: g.gap };
+    }
+
+    const ideas = [];
+    if (!full) {
+      for (const [label, players] of groups) {
+        const examples = [];
+        for (const p of players) {
+          const nextA = behind === 'a' ? sideRows.a.concat(p) : sideRows.a;
+          const nextB = behind === 'b' ? sideRows.b.concat(p) : sideRows.b;
+          const g = land(nextA, nextB);
+          if (g) examples.push(pack(p, g));
+        }
+        examples.sort((a, b) => (gradeRank(a.grade) - gradeRank(b.grade)) || (a.gap - b.gap));
+        if (!examples.length) continue;
+        ideas.push({
+          kind: 'add', side: behind, outId: null,
+          text: 'Add ' + roleArticle(label) + ' ' + label + ' to Side ' + behind.toUpperCase(),
+          need: out.need, from: result.grade, to: examples[0].grade,
+          examples: examples.slice(0, 3),
+        });
+      }
+    }
+
+    const leadRows = sideRows[ahead];
+    for (const piece of leadRows) {
+      const known = byId.get(piece.id);
+      const fromTier = known && known.tier;
+      if (!fromTier) continue;
+      const lower = lowerTiers(piece.pos || known.pos, fromTier);
+      for (const label of lower) {
+        const players = groups.get(label) || [];
+        const examples = [];
+        for (const p of players) {
+          const swapped = leadRows.filter(x => x.id !== piece.id).concat(p);
+          const nextA = ahead === 'a' ? swapped : sideRows.a;
+          const nextB = ahead === 'b' ? swapped : sideRows.b;
+          const g = land(nextA, nextB);
+          if (g) examples.push(pack(p, g));
+        }
+        examples.sort((a, b) => (gradeRank(a.grade) - gradeRank(b.grade)) || (a.gap - b.gap));
+        if (!examples.length) continue;
+        ideas.push({
+          kind: 'swap', side: ahead, outId: piece.id,
+          text: 'Swap Side ' + ahead.toUpperCase() + "'s " + fromTier + ' for a lower-tier ' + label,
+          need: out.need, from: result.grade, to: examples[0].grade,
+          examples: examples.slice(0, 3),
+        });
+      }
+    }
+
+    ideas.sort((a, b) => (a.kind === 'add' ? 0 : 1) - (b.kind === 'add' ? 0 : 1) || gradeRank(a.to) - gradeRank(b.to));
+    const seen = new Set();
+    for (const idea of ideas) {
+      if (seen.has(idea.text)) continue;
+      seen.add(idea.text);
+      out.suggestions.push(idea);
+      if (out.suggestions.length >= 4) break;
+    }
+
+    if (out.suggestions.length < 2) {
+      const small = leadRows.slice().sort((a, b) => num(a.value) - num(b.value))[0];
+      if (small && leadRows.length > 1) {
+        const rest = leadRows.filter(p => p.id !== small.id);
+        const g = land(ahead === 'a' ? rest : sideRows.a, ahead === 'b' ? rest : sideRows.b);
+        if (g) {
+          out.suggestions.push({
+            kind: 'remove', side: ahead, outId: small.id,
+            text: 'Remove the smaller piece from Side ' + ahead.toUpperCase(),
+            need: out.need, from: result.grade, to: g.grade,
+            examples: [{ id: small.id, name: small.name, pos: small.pos, value: small.value, inj: small.inj || '', grade: g.grade, gap: g.gap }],
+          });
+        }
+      }
+    }
+
+    if (!out.suggestions.length && full) out.note = 'Side ' + behind.toUpperCase() + ' already has 5 players, so there is no room to add.';
+    else if (!out.suggestions.length) out.note = 'No top-150 piece gets this to an A or a B in one move.';
+    return out;
+  }
+
+  function gradeRank(g) {
+    return { 'A+': 0, A: 1, B: 2, C: 3, D: 4, F: 5 }[g] ?? 9;
+  }
+
+  function lowerTiers(pos, tier) {
+    const order = (ROLE_CUTS[pos] || []).map((_, i) => pos + (i + 1));
+    const i = order.indexOf(tier);
+    return i < 0 ? [] : order.slice(i + 1);
+  }
+
   function snapshotPlayer(pl, week) {
     const prior = (pl.log || []).filter(g => g.wk < week);
     if (prior.length < 2) return null;
@@ -805,7 +977,43 @@
     if (tradeState.note) result.notes.push(tradeState.note);
     const bar = result.empty ? 50 : (result.a.total + result.b.total <= 0 ? 50 : 100 * result.a.total / (result.a.total + result.b.total));
     const grade = result.grade ? `<span class="trade-letter tone-${result.tone}">${result.grade}</span>` : '';
-    box.innerHTML = `<div class="trade-totals"><span>Side A <b>${result.a.total.toFixed(1)}</b></span><span>Side B <b>${result.b.total.toFixed(1)}</b></span></div><div class="trade-bar" role="img" aria-label="Side A ${bar.toFixed(0)} percent, side B ${(100 - bar).toFixed(0)} percent"><span class="ta" style="width:${bar}%"></span><span class="tb" style="width:${100 - bar}%"></span></div><div class="trade-verdict">${grade}<p>${esc(result.verdict)}</p></div>${result.notes.length ? `<ul class="trade-notes">${result.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>` : ''}`;
+    const ideas = result.empty ? null : fairer(rows.a, rows.b, fairPool());
+    box.innerHTML = `<div class="trade-totals"><span>Side A <b>${result.a.total.toFixed(1)}</b></span><span>Side B <b>${result.b.total.toFixed(1)}</b></span></div><div class="trade-bar" role="img" aria-label="Side A ${bar.toFixed(0)} percent, side B ${(100 - bar).toFixed(0)} percent"><span class="ta" style="width:${bar}%"></span><span class="tb" style="width:${100 - bar}%"></span></div><div class="trade-verdict">${grade}<p>${esc(result.verdict)}</p></div>${result.notes.length ? `<ul class="trade-notes">${result.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>` : ''}${fairerHtml(ideas, esc)}`;
+    box.querySelectorAll('.trade-pick').forEach(btn => btn.addEventListener('click', () => {
+      const side = btn.dataset.side;
+      if (btn.dataset.kind === 'remove') {
+        tradeState[side] = tradeState[side].filter(id => id !== btn.dataset.id);
+        renderTrade();
+        return;
+      }
+      if (btn.dataset.kind === 'swap' && btn.dataset.out) tradeState[side] = tradeState[side].filter(id => id !== btn.dataset.out);
+      addPlayer(side, btn.dataset.id);
+    }));
+  }
+  function fairPool() {
+    const data = ml() && ml().state && ml().state.data;
+    if (!data) return [];
+    return data.players.filter(p => p.tv && p.tv.top).map(p => {
+      const row = cardRow(p.id);
+      return row && { id: row.id, name: row.name, pos: row.pos, value: row.value, inj: injLabel(p) };
+    }).filter(Boolean);
+  }
+  function fairerHtml(ideas, esc) {
+    if (!ideas) return '';
+    const head = '<section class="trade-fair" aria-label="Make it fairer"><h3>Make it fairer</h3>';
+    if (ideas.fair) return head + '<p class="trade-fair-note">This looks fair</p></section>';
+    const items = ideas.suggestions.map(s => {
+      const need = s.kind === 'add' && s.need != null ? `About ${Number(s.need).toFixed(1)} value to close the gap. ` : '';
+      const move = s.to ? `Grade would move from ${s.from} to ${s.to}.` : '';
+      const picks = s.examples.map(ex => {
+        const inj = ex.inj ? ` · <span class="trade-inj">${esc(ex.inj)}</span>` : '';
+        const verb = s.kind === 'remove' ? 'Remove' : (s.kind === 'swap' ? 'Swap in' : 'Add');
+        return `<button type="button" class="trade-pick" data-kind="${esc(s.kind)}" data-side="${esc(s.side)}" data-id="${esc(ex.id)}" data-out="${esc(s.outId || '')}" aria-label="${esc(verb + ' ' + ex.name + ' on side ' + s.side.toUpperCase())}"><span class="trade-pick-name">${esc(ex.name)}</span><span class="trade-pick-meta">${Number(ex.value).toFixed(1)} · ${esc(ex.grade)}${inj}</span></button>`;
+      }).join('');
+      return `<li><p class="trade-fair-title">${esc(s.text)}</p><p class="trade-fair-sub">${esc(need + move)}</p><div class="trade-picks">${picks}</div></li>`;
+    }).join('');
+    const note = ideas.note ? `<p class="trade-fair-note">${esc(ideas.note)}</p>` : '';
+    return head + note + (items ? `<ul class="trade-ideas">${items}</ul>` : '') + '</section>';
   }
   function addPlayer(side, id) {
     tradeState.note = '';
@@ -889,7 +1097,7 @@
     curve, scaled,
     missFromText, statusMiss, newsMiss, combineMiss, availability, ageFactor, roleFactor, teamFactor, pointsOf,
     gamesBasis, gameEq, parseNews, injuryPlan, sumOutlook, IR_MIN, LONG_DYNASTY,
-    ageFromBirth, spearman, adjustSide, gradeGap, analyze, valueOf, attachTrade, backtest, round1,
+    ageFromBirth, spearman, adjustSide, gradeGap, analyze, fairer, tierOf, valueOf, attachTrade, backtest, round1,
     ensure, init, render: renderTrade,
   };
 });
