@@ -59,7 +59,7 @@
    the whole dynasty figure by 7 percent.
 
    Every team's starting quarterback, top running back, top receivers, and
-   starting tight end stay searchable even when they are outside the top 150.
+   starting tight end stay searchable even when they are outside the top 250.
 
    Consolidation: each extra player on the deeper side discounts that
    side by 4% of its total, capped at 12%. A 2-for-1 is a 4% depth
@@ -95,7 +95,10 @@
   const DYNASTY_NEXT = 0.4;
   const CONSOLIDATION = 0.04;
   const CONSOLIDATION_CAP = 0.12;
-  const TOP_N = 150;
+  const TOP_N = 250;
+  // ADP curve is fit on the top of the draft board, separate from the
+  // searchable trade set, so widening search does not refit that curve.
+  const ADP_FIT_N = 150;
   const CURVE_T = 20;
   const SEASON_WEEKS = 17;
   // [redraft, dynasty]. Healthy players already sit on the healthy baseline,
@@ -114,6 +117,18 @@
   };
 
   function round1(n) { return Math.round(n * 10) / 10; }
+  function round2(n) { return Math.round(n * 100) / 100; }
+  function round3(n) { return Math.round(n * 1000) / 1000; }
+  function round4(n) { return Math.round(n * 10000) / 10000; }
+  // Stars stay on tenths. Below 1 the tail keeps hundredths, and below 0.1
+  // it keeps thousandths, so a deeper projection does not collapse to 0.
+  function publishValue(n) {
+    if (!(n > 0)) return 0;
+    const capped = Math.min(100, n);
+    if (capped >= 1) return round1(capped);
+    if (capped >= 0.1) return round2(capped);
+    return Math.max(0.001, round3(capped));
+  }
 
   // Monotone curve from ADP (1 is the top pick) to value, fit on healthy
   // players. Bins of about a dozen picks, median value, pooled so a later
@@ -121,7 +136,7 @@
   function fitAdpCurve(points) {
     const rows = (points || []).filter(p => p && p.adp > 0 && p.value >= 0 && !p.hurt)
       .sort((a, b) => a.adp - b.adp)
-      .slice(0, TOP_N);
+      .slice(0, ADP_FIT_N);
     if (rows.length < 40) return null;
     const size = Math.max(8, Math.round(rows.length / 12));
     const bins = [];
@@ -168,7 +183,7 @@
   function blendValue(value, healthy, slot, weight) {
     const cap = Math.max(value, healthy);
     const mixed = (1 - weight) * value + weight * slot;
-    return round1(Math.min(cap, Math.max(value, mixed)));
+    return publishValue(Math.min(cap, Math.max(value, mixed)));
   }
 
   function blendAdp(players) {
@@ -198,6 +213,62 @@
       }
     }
     return players;
+  }
+
+  // Walk the sub-1 tail from the better projection to the worse one.
+  // A tie, or a small inversion, steps down by a thousandth so two different
+  // projections do not share a value, without pulling the rest of the curve down.
+  function untieTail(players) {
+    const rosIndex = { ppr: 0, half: 1, std: 2 };
+    for (const key of SCORINGS) {
+      for (const mode of QB_MODES) {
+        for (let hi = 0; hi < 2; hi++) {
+          const rows = (players || []).filter(p => p && p.tv && p.tv.v && p.tv.par && p.tv.v[key][mode][hi] > 0 && p.tv.v[key][mode][hi] < 1);
+          rows.sort((a, b) => {
+            const dp = b.tv.par[key][mode][hi] - a.tv.par[key][mode][hi];
+            if (dp) return dp;
+            const ros = b.tv.ros[rosIndex[key]] - a.tv.ros[rosIndex[key]];
+            if (ros) return ros;
+            return String(a.id).localeCompare(String(b.id));
+          });
+          let prevV = null;
+          let prevPar = null;
+          let prevRos = null;
+          for (const p of rows) {
+            const par = p.tv.par[key][mode][hi];
+            const ros = p.tv.ros[rosIndex[key]];
+            let v = p.tv.v[key][mode][hi];
+            const worse = prevV != null && (par < prevPar - 1e-9 || (Math.abs(par - prevPar) < 1e-9 && ros < prevRos - 1e-9));
+            if (worse && v >= prevV) {
+              const step = prevV >= 0.1 ? 0.001 : 0.0001;
+              let nv = round4(prevV - step);
+              if (!(nv > 0) || nv >= prevV) nv = round4(prevV * 0.5);
+              if (!(nv > 0)) nv = 0.0001;
+              v = nv;
+              p.tv.v[key][mode][hi] = v;
+            }
+            prevV = v;
+            prevPar = par;
+            prevRos = ros;
+          }
+        }
+      }
+    }
+    return players;
+  }
+
+  function valueText(n) {
+    const v = Number(n) || 0;
+    if (!(v > 0)) return '0.0';
+    if (v >= 1) return round1(v).toFixed(1);
+    const shown = round4(v);
+    const evenHundredth = Math.abs(shown * 100 - Math.round(shown * 100)) < 1e-6;
+    if (v < 0.1 || !evenHundredth) {
+      const text = shown.toFixed(4).replace(/0+$/, '');
+      const decimals = (text.split('.')[1] || '');
+      return decimals.length < 2 ? shown.toFixed(2) : text;
+    }
+    return round2(shown).toFixed(2);
   }
   function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
   function num(v) { return Number(v) || 0; }
@@ -470,7 +541,7 @@
 
   function scaled(surplus, maxCurve) {
     if (!(maxCurve > 0)) return 0;
-    return round1(Math.min(100, 100 * curve(surplus) / maxCurve));
+    return publishValue(100 * curve(surplus) / maxCurve);
   }
 
   function spearman(xs, ys) {
@@ -664,6 +735,7 @@
     }
 
     blendAdp(players);
+    untieTail(players);
 
     const rankScore = pl => Math.max(pl.tv.v.ppr.qb1[0], pl.tv.v.ppr.qb1[1]);
     const ranked = players.slice().sort((a, b) => (rankScore(b) - rankScore(a)) || (b.tv.ros[0] - a.tv.ros[0]));
@@ -677,7 +749,7 @@
       }
     }
     data.meta.trade = {
-      v: 5,
+      v: 6,
       playoff: PLAYOFF_WEIGHT,
       ramp: RETURN_RAMP,
       top: TOP_N,
@@ -716,15 +788,15 @@
       const baked = tv.inj.long ? Infinity : (tv.inj.miss || 0);
       if (!(extra > baked) || tv.inj.long) return base;
       const now = playedShare(week, extra, extra >= 2);
-      return round1(base * shareRatio(tv.share, now, hi));
+      return publishValue(base * shareRatio(tv.share, now, hi));
     }
     const status = tv.season ? Infinity : (tv.miss || 0);
     const miss = combineMiss(status, extra);
     if (miss === status || !tv.g) return base;
-    if (miss === Infinity) return hi === 1 ? round1(base * LONG_DYNASTY) : 0;
+    if (miss === Infinity) return hi === 1 ? publishValue(base * LONG_DYNASTY) : 0;
     const now = playedShare(week, miss, miss >= 2);
     const was = tv.share > 0 ? tv.share : playedShare(week, status, status >= 2);
-    return round1(base * shareRatio(was, now, hi));
+    return publishValue(base * shareRatio(was, now, hi));
   }
 
   function adjustSide(raw, count, otherCount) {
@@ -964,7 +1036,7 @@
     }
 
     if (!out.suggestions.length && full) out.note = 'Side ' + behind.toUpperCase() + ' already has 5 players, so there is no room to add.';
-    else if (!out.suggestions.length) out.note = 'No top-150 piece gets this to an A or a B in one move.';
+    else if (!out.suggestions.length) out.note = 'No top-' + TOP_N + ' piece gets this to an A or a B in one move.';
     return out;
   }
 
@@ -1144,7 +1216,7 @@
         let facts = '';
         if (injured) {
           const pre = preValue(row.pl);
-          const healthy = pre != null ? `<div class="trade-meta"><span class="trade-k">Healthy value</span> <b class="trade-pre">${pre.toFixed(1)}</b></div>` : '';
+          const healthy = pre != null ? `<div class="trade-meta"><span class="trade-k">Healthy value</span> <b class="trade-pre">${valueText(pre)}</b></div>` : '';
           const inj = row.pl.tv.inj;
           let missed = 'Expected games missed: rest of season';
           if (!inj.long && !row.long) {
@@ -1155,7 +1227,7 @@
           facts = healthy + `<div class="trade-meta">${esc(missed)}</div>`;
         }
         const valueLabel = injured ? 'Injury-adjusted value' : 'value';
-        return `<li class="trade-card"><div><div class="trade-name">${esc(row.name)} <span class="pos ${esc(row.pos)}">${esc(row.pos)}</span> <span class="meta">${esc(row.team)}</span></div>${tag ? `<div class="trade-inj">${esc(tag)}</div>` : ''}<div class="trade-meta"><b class="trade-val">${row.value.toFixed(1)}</b> ${valueLabel}${adp} · ${range}</div>${facts}</div><button type="button" class="trade-x" data-side="${side}" data-id="${esc(row.id)}" aria-label="Remove ${esc(row.name)} from side ${side.toUpperCase()}">×</button></li>`;
+        return `<li class="trade-card"><div><div class="trade-name">${esc(row.name)} <span class="pos ${esc(row.pos)}">${esc(row.pos)}</span> <span class="meta">${esc(row.team)}</span></div>${tag ? `<div class="trade-inj">${esc(tag)}</div>` : ''}<div class="trade-meta"><b class="trade-val">${valueText(row.value)}</b> ${valueLabel}${adp} · ${range}</div>${facts}</div><button type="button" class="trade-x" data-side="${side}" data-id="${esc(row.id)}" aria-label="Remove ${esc(row.name)} from side ${side.toUpperCase()}">×</button></li>`;
       }).join('') || '<li class="trade-empty">No players yet.</li>';
       host.querySelectorAll('.trade-x').forEach(btn => btn.addEventListener('click', () => {
         tradeState[btn.dataset.side] = tradeState[btn.dataset.side].filter(id => id !== btn.dataset.id);
@@ -1199,7 +1271,7 @@
       const picks = s.examples.map(ex => {
         const inj = ex.inj ? ` · <span class="trade-inj">${esc(ex.inj)}</span>` : '';
         const verb = s.kind === 'remove' ? 'Remove' : (s.kind === 'swap' ? 'Swap in' : 'Add');
-        return `<button type="button" class="trade-pick" data-kind="${esc(s.kind)}" data-side="${esc(s.side)}" data-id="${esc(ex.id)}" data-out="${esc(s.outId || '')}" aria-label="${esc(verb + ' ' + ex.name + ' on side ' + s.side.toUpperCase())}"><span class="trade-pick-name">${esc(ex.name)}</span><span class="trade-pick-meta">${Number(ex.value).toFixed(1)} · ${esc(ex.grade)}${inj}</span></button>`;
+        return `<button type="button" class="trade-pick" data-kind="${esc(s.kind)}" data-side="${esc(s.side)}" data-id="${esc(ex.id)}" data-out="${esc(s.outId || '')}" aria-label="${esc(verb + ' ' + ex.name + ' on side ' + s.side.toUpperCase())}"><span class="trade-pick-name">${esc(ex.name)}</span><span class="trade-pick-meta">${valueText(ex.value)} · ${esc(ex.grade)}${inj}</span></button>`;
       }).join('');
       return `<li><p class="trade-fair-title">${esc(s.text)}</p><p class="trade-fair-sub">${esc(need + move)}</p><div class="trade-picks">${picks}</div></li>`;
     }).join('');
@@ -1227,9 +1299,9 @@
         const tag = injLabel(p);
         const pre = preValue(p);
         const now = liveValue(p);
-        const was = pre != null && pre - now >= 0.5 ? ` · ${pre.toFixed(1)} if healthy` : '';
-        return `<li role="option" data-id="${esc(p.id)}" aria-selected="${i === active}"><span class="pos ${esc(p.pos)}">${esc(p.pos)}</span> ${esc(p.name)} <span class="meta">${esc(p.team)} · ${now.toFixed(1)}${was}${tag ? ' · ' + esc(tag) : ''}</span></li>`;
-      }).join('') : `<li class="empty">${tradeState.all ? 'No players match.' : 'No top-150 or starter match. Search all players for a lower fallback value.'}</li>`;
+        const was = pre != null && pre - now >= 0.5 ? ` · ${valueText(pre)} if healthy` : '';
+        return `<li role="option" data-id="${esc(p.id)}" aria-selected="${i === active}"><span class="pos ${esc(p.pos)}">${esc(p.pos)}</span> ${esc(p.name)} <span class="meta">${esc(p.team)} · ${valueText(now)}${was}${tag ? ' · ' + esc(tag) : ''}</span></li>`;
+      }).join('') : `<li class="empty">${tradeState.all ? 'No players match.' : 'No top-' + TOP_N + ' or starter match. Search all players for a lower fallback value.'}</li>`;
       list.hidden = false;
       input.setAttribute('aria-expanded', 'true');
       list.querySelectorAll('li[data-id]').forEach(li => li.addEventListener('mousedown', e => { e.preventDefault(); addPlayer(side, li.dataset.id); input.value = ''; close(); }));
@@ -1262,8 +1334,24 @@
       renderTrade();
     }));
   }
+  // An older published file already has a value for every player. Widen the
+  // searchable set and separate tied tail values without rebuilding projections.
+  function upgradeTrade(data) {
+    const meta = data && data.meta && data.meta.trade;
+    if (!meta || !(data.players || []).some(p => p.tv && p.tv.v)) return data;
+    if (meta.v >= 6 && meta.top >= TOP_N) return data;
+    untieTail(data.players);
+    const rankScore = pl => Math.max(pl.tv.v.ppr.qb1[0], pl.tv.v.ppr.qb1[1]);
+    const ranked = data.players.filter(pl => pl.tv && pl.tv.v).sort((a, b) => (rankScore(b) - rankScore(a)) || ((b.tv.ros[0] || 0) - (a.tv.ros[0] || 0)));
+    ranked.forEach((pl, i) => { pl.tv.top = i < TOP_N; });
+    meta.v = 6;
+    meta.top = TOP_N;
+    return data;
+  }
+
   function ensure(data) {
-    if (!data || (data.meta && data.meta.trade && (data.players || []).some(p => p.tv))) return data;
+    if (!data) return data;
+    if (data.meta && data.meta.trade && (data.players || []).some(p => p.tv)) return upgradeTrade(data);
     const project = (typeof window !== 'undefined' && window.MLModel && window.MLModel.project) || null;
     if (!project) return data;
     attachTrade(data, { project, scoring: window.MLModel.SCORING, ages: {} });
@@ -1284,7 +1372,7 @@
   }
 
   return {
-    SCORINGS, QB_MODES, SLOTS, DYNASTY_ROS, DYNASTY_NEXT, CONSOLIDATION, CONSOLIDATION_CAP, TOP_N, CURVE_T, AGE_CURVE, PREF,
+    SCORINGS, QB_MODES, SLOTS, DYNASTY_ROS, DYNASTY_NEXT, CONSOLIDATION, CONSOLIDATION_CAP, TOP_N, ADP_FIT_N, CURVE_T, AGE_CURVE, PREF,
     curve, scaled,
     missFromText, statusMiss, newsMiss, combineMiss, availability, ageFactor, roleFactor, teamFactor, pointsOf,
     gamesBasis, gameEq, weekWeight, playedShare, dynastyShare, PLAYOFF_WEIGHT, RETURN_RAMP, DYNASTY_SHORT,
