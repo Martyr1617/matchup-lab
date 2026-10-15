@@ -8,10 +8,8 @@
   let ML, idx;
 
   // ---------- Slots ----------
-  const ELIG = {
-    QB: ['QB'], RB: ['RB'], WR: ['WR'], TE: ['TE'], K: ['K'], DEF: ['DEF'],
-    FLEX: ['RB', 'WR', 'TE'], SUPER_FLEX: ['QB', 'RB', 'WR', 'TE'], WRRB_FLEX: ['RB', 'WR'], REC_FLEX: ['WR', 'TE'],
-  };
+  const LUP = globalThis.MLLineup;
+  const ELIG = LUP.ELIG;
   const SLOT_LABEL = { QB: 'QB', RB: 'RB', WR: 'WR', TE: 'TE', K: 'K', DEF: 'DEF', FLEX: 'FLEX', SUPER_FLEX: 'SFLEX', WRRB_FLEX: 'W/R', REC_FLEX: 'W/T' };
   const PRESETS = {
     std: { label: 'Standard: QB, 2 RB, 2 WR, TE, FLEX, K, DEF', slots: ['QB', 'RB', 'RB', 'WR', 'WR', 'TE', 'FLEX', 'K', 'DEF'] },
@@ -19,8 +17,7 @@
     flex2: { label: '2 FLEX: QB, 2 RB, 2 WR, TE, 2 FLEX, K, DEF', slots: ['QB', 'RB', 'RB', 'WR', 'WR', 'TE', 'FLEX', 'FLEX', 'K', 'DEF'] },
     sf: { label: 'Superflex: QB, 2 RB, 2 WR, TE, FLEX, SFLEX', slots: ['QB', 'RB', 'RB', 'WR', 'WR', 'TE', 'FLEX', 'SUPER_FLEX'] },
   };
-  const ESPN_SLOT = { 0: 'QB', 2: 'RB', 3: 'WRRB_FLEX', 4: 'WR', 5: 'REC_FLEX', 6: 'TE', 23: 'FLEX', 7: 'SUPER_FLEX', 17: 'K', 16: 'DEF' };
-  const ESPN_SLOT_ORDER = [0, 2, 4, 6, 3, 5, 23, 7, 17, 16];
+  const ESPN_SLOT = LUP.ESPN_SLOT;
   const ESPN_POS = { 1: 'QB', 2: 'RB', 3: 'WR', 4: 'TE', 5: 'K', 16: 'DEF' };
 
   // ---------- Name matching ----------
@@ -109,8 +106,7 @@
     let matchups = [];
     try { matchups = await getJSON(`https://api.sleeper.app/v1/league/${leagueId}/matchups/${week}`) || []; } catch (e) { /* no matchups */ }
     const userById = Object.fromEntries((users || []).map(u => [u.user_id, u]));
-    const rp = lg.roster_positions || [];
-    const slots = rp.filter(s => s !== 'BN' && s !== 'IR' && s !== 'TAXI').map(s => (s === 'SUPERFLEX' ? 'SUPER_FLEX' : s));
+    const slots = LUP.slotsFromSleeper(lg.roster_positions || []);
     const { S, unmodeled } = sleeperScoring(lg.scoring_settings);
     const mk = sid => resolveSleeper(sid);
     const teams = (rosters || []).map(r => {
@@ -151,9 +147,7 @@
       if (e.status === 404) throw new Error(`No ESPN league ${leagueId} found for the ${SEASON} season.`);
       throw e;
     }
-    const counts = d.settings?.rosterSettings?.lineupSlotCounts || {};
-    const slots = [];
-    for (const id of ESPN_SLOT_ORDER) for (let i = 0; i < (counts[id] || 0); i++) slots.push(ESPN_SLOT[id]);
+    const slots = LUP.slotsFromEspn(d.settings?.rosterSettings?.lineupSlotCounts || {});
     const { S, unmodeled } = espnScoring(d.settings);
     const week = ML.state.week;
     const mp = d.settings?.scheduleSettings?.matchupPeriods || {};
@@ -238,62 +232,8 @@
     return r;
   }
 
-  // Hungarian algorithm (min-cost assignment), rows <= cols
-  function hungarian(cost) {
-    const n = cost.length, m = cost[0].length;
-    const u = new Array(n + 1).fill(0), v = new Array(m + 1).fill(0), p = new Array(m + 1).fill(0), way = new Array(m + 1).fill(0);
-    for (let i = 1; i <= n; i++) {
-      p[0] = i; let j0 = 0; const minv = new Array(m + 1).fill(Infinity); const used = new Array(m + 1).fill(false);
-      do {
-        used[j0] = true; const i0 = p[j0]; let delta = Infinity, j1 = 0;
-        for (let j = 1; j <= m; j++) if (!used[j]) {
-          const cur = cost[i0 - 1][j - 1] - u[i0] - v[j];
-          if (cur < minv[j]) { minv[j] = cur; way[j] = j0; }
-          if (minv[j] < delta) { delta = minv[j]; j1 = j; }
-        }
-        for (let j = 0; j <= m; j++) { if (used[j]) { u[p[j]] += delta; v[j] -= delta; } else minv[j] -= delta; }
-        j0 = j1;
-      } while (p[j0] !== 0);
-      do { const j1 = way[j0]; p[j0] = p[j1]; j0 = j1; } while (j0);
-    }
-    const res = new Array(n).fill(-1);
-    for (let j = 1; j <= m; j++) if (p[j]) res[p[j] - 1] = j - 1;
-    return res;
-  }
-
   function optimize(slots, roster, currentSlots) {
-    // roster: evaluated players. Locked current starters stay in their slot; locked bench players unavailable.
-    const curKeys = new Set((currentSlots || []).filter(c => c.key).map(c => c.key));
-    const fixed = new Array(slots.length).fill(null);
-    const used = new Set();
-    if (currentSlots) {
-      const remaining = slots.map((s, i) => i);
-      for (const c of currentSlots) {
-        if (!c.key) continue;
-        const pl = roster.find(p => p.key === c.key);
-        if (pl && pl.locked) {
-          const i = remaining.find(i => slots[i] === c.slot && fixed[i] === null);
-          if (i != null) { fixed[i] = pl; used.add(pl.key); }
-        }
-      }
-    }
-    const pool = roster.filter(p => !used.has(p.key) && !(p.locked && !curKeys.has(p.key)) && ELIG.FLEX.concat(['QB', 'K', 'DEF']).includes(p.pos));
-    const openIdx = slots.map((s, i) => i).filter(i => fixed[i] === null);
-    const BIG = 1e6;
-    const assignment = fixed.slice();
-    if (openIdx.length) {
-      const cols = pool.length + openIdx.length; // dummy "empty" columns
-      const cost = openIdx.map(i => {
-        const row = [];
-        for (const p of pool) row.push(ELIG[slots[i]]?.includes(p.pos) ? -p.value : BIG);
-        for (let k = 0; k < openIdx.length; k++) row.push(0);
-        return row;
-      });
-      const res = hungarian(cost);
-      res.forEach((col, r) => { const i = openIdx[r]; assignment[i] = col >= 0 && col < pool.length && cost[r][col] < BIG ? pool[col] : null; });
-      // empty is preferred over unavailable (value -1); keep those empty
-    }
-    return assignment;
+    return LUP.optimize(slots, roster, currentSlots);
   }
 
   function lineupStats(players) {

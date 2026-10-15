@@ -165,6 +165,101 @@
     return { cls: 'bad', label: 'Tough', rk };
   }
 
+  // Attempts below this are a backup's recent usage, so a charted starter can
+  // take the volume of the teammate who was actually playing the job. A QB
+  // already throwing starter volume (about 12+ attempts) keeps his own line.
+  const QB_INHERIT_PA = 12;
+  const QB_CAP_PA = 8;
+  const QB_BACKUP_PA = 2.5;
+  const ROLE_DECAY = 0.7;
+  const THIN_VOLUME = { RB: ['ca', 6], WR: ['tg', 3.5], TE: ['tg', 3.5] };
+  const idIndex = new WeakMap();
+
+  function playersById(data) {
+    let map = idIndex.get(data);
+    if (map) return map;
+    map = new Map();
+    for (const p of data.players || []) if (p && p.id != null) map.set(String(p.id), p);
+    idIndex.set(data, map);
+    return map;
+  }
+
+  function priorWeighted(mate, week, key) {
+    const prior = (mate.log || []).filter(g => g.wk < week);
+    if (!prior.length) return null;
+    const cur = week - 1;
+    let wsum = 0, acc = 0;
+    for (const g of prior) {
+      const wt = ROLE_DECAY ** (cur - g.wk);
+      wsum += wt;
+      acc += wt * (Number(g[key]) || 0);
+    }
+    return wsum ? acc / wsum : null;
+  }
+
+  // League ypt and receiving-TD rate mix RB checkdowns with WR and TE routes.
+  // Shrinking every position toward that mix under-projects WR yards and TE
+  // touchdowns and over-projects RB receiving. Use the position rate when the
+  // bundle has one.
+  function posPrior(data, pos, numKey, denKey, fallback) {
+    const lp = data.league_pos && data.league_pos[pos];
+    const num = lp && Number(lp[numKey]);
+    const den = lp && Number(lp[denKey]);
+    if (den > 0 && Number.isFinite(num)) return num / den;
+    return fallback;
+  }
+
+  // Depth chart + injury report for this week. No roles in the file means the
+  // published volume is used as-is, so an older data bundle still projects.
+  function roleVolume(pl, week, data) {
+    const w = { ...(pl.w || {}) };
+    const roles = data.roles && data.roles[String(week)];
+    if (!roles || !pl.team || pl.id == null) return w;
+    const chart = (((roles.chart || {})[pl.team] || {})[pl.pos] || []).map(String);
+    if (!chart.length) return w;
+    const id = String(pl.id);
+    if (!chart.includes(id)) return w;
+    const ruledOut = new Set((roles.out || []).map(String));
+    const active = chart.find(pid => !ruledOut.has(pid));
+    if (!active) return w;
+    const mates = playersById(data);
+    if (pl.pos === 'QB') {
+      const own = Number(w.pa) || 0;
+      if (id === active && own < QB_INHERIT_PA) {
+        let best = own;
+        for (const pid of chart) {
+          if (pid === id) continue;
+          const mate = mates.get(pid);
+          const pa = mate && priorWeighted(mate, week, 'pa');
+          if (pa != null && pa > best) best = pa;
+        }
+        w.pa = best;
+      } else if (id !== chart[0] && !ruledOut.has(chart[0]) && own > QB_CAP_PA) {
+        // Cap only when the charted starter's own line is still a backup's,
+        // which is the same week he takes over that teammate's volume. A
+        // chart that still lists a benched quarterback first must not wipe
+        // out the player who has actually been throwing.
+        const starter = mates.get(chart[0]);
+        const starterPa = starter && priorWeighted(starter, week, 'pa');
+        if (starterPa != null && starterPa < QB_INHERIT_PA) w.pa = QB_BACKUP_PA;
+      }
+      return w;
+    }
+    const thin = THIN_VOLUME[pl.pos];
+    if (!thin || id !== active) return w;
+    const [key, limit] = thin;
+    if ((Number(w[key]) || 0) >= limit) return w;
+    let best = Number(w[key]) || 0;
+    for (const pid of chart) {
+      if (pid === id || !ruledOut.has(pid)) continue;
+      const mate = mates.get(pid);
+      const v = mate && priorWeighted(mate, week, key);
+      if (v != null && v > best) best = v;
+    }
+    w[key] = best;
+    return w;
+  }
+
   function project(pl, week, scoringKey, env) {
     const D = env.data, L = D.league, S = typeof scoringKey === 'object' ? scoringKey : SCORING[scoringKey];
     const game = gameFor(pl.team, week, D);
@@ -172,7 +267,9 @@
     const home = game.home === pl.team, opp = home ? game.away : game.home;
     const def = D.defense[opp]; const F = def.factors;
     const homeAdj = home ? 1.02 : 0.98;
-    const w = pl.w, t = pl.t;
+    const w = roleVolume(pl, week, D), t = pl.t;
+    const yptPrior = posPrior(D, pl.pos, 'rec_yds_pg', 'tgt_pg', L.ypt);
+    const rctdPrior = posPrior(D, pl.pos, 'rec_td_pg', 'tgt_pg', L.rec_td_rate);
     const wx = weatherAdj(game, env.wx || {}), wp = wx.pass, wpHalf = Math.sqrt(wx.pass);
     const posF = pw(def.pos_factors[pl.pos], 0.35);
     const posYF = pw((def.pos_yds_factors || {})[pl.pos], 0.3);
@@ -186,9 +283,9 @@
     const tg = w.tg * pw(F.pass_att, 0.4) * homeAdj * wpHalf;
     const catchRate = Math.min(0.95, blend(t.rc, t.tg, L.comp_pct, 15) * pw(F.comp_pct, 0.5));
     const rc = tg * catchRate;
-    const ypt = blend(t.rcy, t.tg, L.ypt, 25) * pw(F.ypa, 0.5) * posYF * (pl.pos !== 'RB' ? posF : 1) * wpHalf;
+    const ypt = blend(t.rcy, t.tg, yptPrior, 25) * pw(F.ypa, 0.5) * posYF * (pl.pos !== 'RB' ? posF : 1) * wpHalf;
     const rcy = tg * ypt;
-    const rctd = tg * blend(t.rctd, t.tg, L.rec_td_rate, 50) * pw(F.pass_td, 0.5) * (pl.pos !== 'RB' ? posF : 1) * wpHalf;
+    const rctd = tg * blend(t.rctd, t.tg, rctdPrior, 50) * pw(F.pass_td, 0.5) * (pl.pos !== 'RB' ? posF : 1) * wpHalf;
     // Passing
     const pa = w.pa * pw(F.pass_att, 0.3) * homeAdj * wpHalf;
     const ypa = blend(t.py, t.pa, L.ypa, 80) * pw(F.ypa, 0.6) * (pl.pos === 'QB' ? posF : 1) * wpHalf;
@@ -209,7 +306,7 @@
     // baseline (no opponent adjustment) for comparison
     const b = {
       ca: w.ca, ry: w.ca * blend(t.ry, t.ca, L.ypc, 60), rtd: w.ca * blend(t.rtd, t.ca, L.rush_td_rate, 60),
-      tg: w.tg, rc: w.tg * Math.min(0.95, blend(t.rc, t.tg, L.comp_pct, 15)), rcy: w.tg * blend(t.rcy, t.tg, L.ypt, 25), rctd: w.tg * blend(t.rctd, t.tg, L.rec_td_rate, 50),
+      tg: w.tg, rc: w.tg * Math.min(0.95, blend(t.rc, t.tg, L.comp_pct, 15)), rcy: w.tg * blend(t.rcy, t.tg, yptPrior, 25), rctd: w.tg * blend(t.rctd, t.tg, rctdPrior, 50),
       pa: w.pa, py: w.pa * blend(t.py, t.pa, L.ypa, 80), ptd: w.pa * blend(t.ptd, t.pa, L.pass_td_rate, 80), int: w.pa * blend(t.int, t.pa, L.int_rate, 100), fl, two,
     };
     const basePts = ptsOf(b);

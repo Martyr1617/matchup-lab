@@ -42,6 +42,8 @@ B="https://github.com/nflverse/nflverse-data/releases/download"
 fetch data/players_2026.csv      "$B/stats_player/stats_player_week_2026.csv"
 fetch data/team_2026.csv         "$B/stats_team/stats_team_week_2026.csv"
 fetch data/injuries_2026.csv     "$B/injuries/injuries_2026.csv"
+# Optional: a missing depth chart leaves data.roles empty and projections unchanged.
+fetch data/depth_2026.csv        "$B/depth_charts/depth_charts_2026.csv" 0
 fetch data/games.csv             "https://github.com/nflverse/nfldata/raw/master/data/games.csv"
 fetch data/sleeper_players.json  "https://api.sleeper.app/v1/players/nfl"
 fetch data/db_playerids.csv      "https://github.com/dynastyprocess/data/raw/master/files/db_playerids.csv"

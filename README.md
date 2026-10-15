@@ -19,7 +19,7 @@ To refresh right away, go to Actions → "Refresh Matchup Lab data" → Run work
 ## Tests
 
 ```
-node --test test/model.test.js test/pwa.test.js
+node --test test/model.test.js test/pwa.test.js test/lineup.test.js
 python3 -m pytest tests
 ```
 
