@@ -46,6 +46,14 @@ test('service worker versions the shell and prefers fresh projection files', () 
   assert.equal(fs.existsSync(path.join(site, 'icon-options')), false);
 });
 
+test('news and trade sit immediately after my team', () => {
+  const html = read('index.html');
+  const nav = html.slice(html.indexOf('<nav class="tabs"'), html.indexOf('</nav>'));
+  const views = [...nav.matchAll(/data-view="([^"]+)"/g)].map(m => m[1]);
+  assert.deepEqual(views, ['board', 'team', 'news', 'trade', 'player', 'compare', 'defense', 'method']);
+  assert.match(nav, /class="tab is-active" data-view="board"/);
+});
+
 test('the page registers the worker and declares an iOS icon', () => {
   const html = read('index.html');
   assert.match(html, /viewport-fit=cover/);
