@@ -91,6 +91,19 @@ test('the header refresh button updates data in place and can activate a waiting
   assert.doesNotMatch(sw, /caches\.delete\(DATA_CACHE\)|caches\.delete\('ml-data'\)/);
 });
 
+test('my team has no copy-link control and still saves and lines up', () => {
+  const team = read('team.js');
+  const css = read('styles.css');
+  assert.doesNotMatch(team, /copyTeamLink|Copy my team link|teamLinkBox|copyMsg|clipboard\.writeText|execCommand\('copy'\)/);
+  assert.doesNotMatch(team, /team link below|Bookmark it or add it to your Home Screen/);
+  assert.doesNotMatch(css, /\.keep-row|\.keep-link|\.btn\.sm/);
+  assert.match(team, /saved-strip/);
+  assert.match(team, /function rememberTeam/);
+  assert.match(team, /function openFromHash/);
+  assert.match(team, /Optimal Week/);
+  assert.match(team, /id="teamSel"/);
+});
+
 test('the page registers the worker and declares an iOS icon', () => {
   const html = read('index.html');
   assert.match(html, /viewport-fit=cover/);
