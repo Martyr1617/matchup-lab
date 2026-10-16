@@ -1053,7 +1053,7 @@
     if (!el) return;
     if (!text) { el.hidden = true; el.textContent = ''; return; }
     el.hidden = false;
-    el.className = bad ? 'notice bad' : 'notice';
+    el.className = bad === 'ok' ? 'notice ok' : bad ? 'notice bad' : 'notice';
     el.textContent = text;
   }
   function noteDataFreshness(data, src) {
@@ -1080,54 +1080,145 @@
     const t = parseGenerated(generated);
     return { generated, t, age: t == null ? '' : agePhrase(t) };
   }
+  function whenLine(info) {
+    if (!info || !info.generated) return '';
+    return info.generated + (info.age ? ' (' + info.age + ' old)' : '');
+  }
   function paintRefreshStatus(mode) {
     const text = $('#refreshStatusText');
     const more = $('#refreshStatusMore');
     const btn = $('#refreshBtn');
+    const host = $('#refreshStatus');
     const info = generatedAge();
+    const when = whenLine(info);
     let visible = '';
     let detail = 'Refresh data';
     if (mode === 'busy') {
-      visible = 'Updating…';
-      detail = 'Updating data';
+      visible = 'Refreshing…';
+      detail = 'Refreshing projections, odds, and news';
     } else if (mode === 'fail') {
-      visible = 'Update failed';
-      detail = info.generated
-        ? `Couldn't refresh. This screen is still using the data generated ${info.generated}${info.age ? ' (' + info.age + ' ago)' : ''}.`
+      visible = "Couldn't refresh";
+      detail = when
+        ? "Couldn't refresh. This screen is still using the data generated " + when + '.'
         : "Couldn't refresh. Check your connection and try again.";
+    } else if (mode === 'same') {
+      visible = when ? 'Already up to date\n' + info.generated : 'Already up to date';
+      detail = 'Already up to date.' + (when ? ' Data generated ' + when + '.' : '');
     } else if (mode === 'ok') {
-      visible = 'Updated just now';
-      detail = info.generated
-        ? `Updated just now. Data generated ${info.generated}${info.age ? ', ' + info.age + ' old' : ''}.`
-        : 'Updated just now.';
+      visible = when ? 'Updated just now\n' + info.generated : 'Updated just now';
+      detail = 'Updated just now.' + (when ? ' Data generated ' + when + '.' : '');
     } else if (info.t != null) {
       visible = info.age + ' old';
-      detail = `Data generated ${info.generated}, ${info.age} ago.`;
+      detail = 'Data generated ' + info.generated + ', ' + info.age + ' ago.';
     }
     if (text) text.textContent = visible;
     if (more) more.textContent = detail === visible ? '' : detail;
+    if (host) {
+      host.classList.toggle('is-busy', mode === 'busy');
+      host.classList.toggle('is-ok', mode === 'ok' || mode === 'same');
+      host.classList.toggle('is-fail', mode === 'fail');
+    }
     if (btn && mode !== 'busy') btn.setAttribute('aria-label', 'Refresh data. ' + detail);
     if (btn) btn.title = detail;
+  }
+  function showRefreshNotice(mode) {
+    const info = generatedAge();
+    const when = whenLine(info);
+    if (mode === 'busy') { showDataStatus('Refreshing projections, odds, and news…', false); return; }
+    if (mode === 'same') { showDataStatus('Already up to date.' + (when ? ' Data generated ' + when + '.' : ''), 'ok'); return; }
+    if (mode === 'ok') { showDataStatus('Updated just now.' + (when ? ' Data generated ' + when + '.' : ''), 'ok'); return; }
+    if (mode === 'fail') {
+      const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+      const msg = offline
+        ? "You're offline. This screen is still showing" + (when ? ' the data generated ' + when : ' the last data that loaded') + '.'
+        : "Couldn't refresh. Check your connection and try again." + (when ? ' This screen is still showing the data generated ' + when + '.' : '');
+      showDataStatus(msg, true);
+    }
   }
   function setRefreshBusy(on) {
     const btn = $('#refreshBtn');
     if (!btn) return;
     btn.setAttribute('aria-busy', on ? 'true' : 'false');
     btn.disabled = !!on;
-    if (on) paintRefreshStatus('busy');
+    if (on) { paintRefreshStatus('busy'); showRefreshNotice('busy'); }
   }
   async function fetchJson(url, ms, fresh) {
     const ctl = new AbortController();
     const to = setTimeout(() => ctl.abort(), ms == null ? 15000 : ms);
     try {
-      const res = await fetch(url, { cache: fresh ? 'no-store' : 'no-cache', signal: ctl.signal });
+      const res = await fetch(url, { cache: fresh ? 'reload' : 'no-cache', signal: ctl.signal });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       return await res.json();
     } finally { clearTimeout(to); }
   }
   // The main pane is its own scroller, so a pull gesture would fight that
   // scroll and the installed app. Refresh stays on the header button.
-  async function activateWaitingApp() {
+  const SESSION_KEY = 'ml-refresh-session';
+  function saveSession(extra) {
+    let trade = null;
+    try { if (window.MLTrade && window.MLTrade.snapshot) trade = window.MLTrade.snapshot(); } catch (e) { trade = null; }
+    const blob = {
+      at: Date.now(),
+      view: state.view,
+      week: state.week,
+      scoring: state.scoring,
+      pos: state.pos,
+      newsFilter: state.newsFilter,
+      defSort: state.defSort,
+      playerId: state.player && state.player.id,
+      cmp: state.cmp || null,
+      trade,
+    };
+    if (extra) Object.assign(blob, extra);
+    try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(blob)); } catch (e) { /* private mode */ }
+  }
+  function takeSession() {
+    let raw = null;
+    try { raw = sessionStorage.getItem(SESSION_KEY); sessionStorage.removeItem(SESSION_KEY); } catch (e) { return null; }
+    if (!raw) return null;
+    try {
+      const data = JSON.parse(raw);
+      if (!data || !data.at || Date.now() - data.at > 60000) return null;
+      return data;
+    } catch (e) { return null; }
+  }
+  function syncSeg(id, val) {
+    const root = $(id);
+    if (!root || val == null) return;
+    $$('button', root).forEach(b => b.setAttribute('aria-checked', String(b.dataset.val === val)));
+  }
+  function applySession(saved) {
+    if (!saved) return;
+    if (saved.scoring) state.scoring = saved.scoring;
+    if (saved.pos) state.pos = saved.pos;
+    if (saved.newsFilter) state.newsFilter = saved.newsFilter;
+    if (saved.defSort && saved.defSort.key) state.defSort = saved.defSort;
+    if (Array.isArray(saved.cmp)) state.cmp = saved.cmp;
+    syncSeg('#scoringSeg', state.scoring);
+    syncSeg('#posSeg', state.pos);
+    syncSeg('#newsSeg', state.newsFilter);
+    if (saved.week != null) {
+      const sel = $('#weekSelect');
+      const has = sel && Array.from(sel.options).some(o => Number(o.value) === Number(saved.week));
+      if (has) { state.week = Number(saved.week); sel.value = String(state.week); }
+    }
+    if (saved.playerId && state.data) {
+      const pl = state.data.players.find(p => p.id === saved.playerId);
+      if (pl) {
+        state.player = pl;
+        const tab = $('#playerTab');
+        if (tab) { tab.disabled = false; tab.textContent = pl.name; }
+      }
+    }
+    try { if (saved.trade && window.MLTrade && window.MLTrade.restore) window.MLTrade.restore(saved.trade); } catch (e) { /* trade still renders empty */ }
+    if (saved.view && saved.view !== 'board') setView(saved.view);
+    else if (state.view === 'board') renderBoard();
+    if (saved.banner) {
+      paintRefreshStatus(saved.banner);
+      showRefreshNotice(saved.banner);
+    }
+  }
+  async function activateWaitingApp(banner) {
     if (!('serviceWorker' in navigator) || !navigator.serviceWorker.controller) return false;
     let reg;
     try { reg = await navigator.serviceWorker.getRegistration(); } catch (e) { return false; }
@@ -1145,10 +1236,15 @@
       });
     }
     if (!worker) return false;
+    saveSession({ banner: banner || 'ok' });
     let reloaded = false;
+    const drop = setTimeout(() => {
+      if (!reloaded) { try { sessionStorage.removeItem(SESSION_KEY); } catch (e) { /* keep the page as it is */ } }
+    }, 8000);
     navigator.serviceWorker.addEventListener('controllerchange', () => {
       if (reloaded) return;
       reloaded = true;
+      clearTimeout(drop);
       location.reload();
     });
     worker.postMessage({ type: 'SKIP_WAITING' });
@@ -1187,30 +1283,34 @@
       indexNews();
       if (window.MLTrade) window.MLTrade.ensure(state.data);
       noteDataFreshness(state.data, 'remote');
+      showRefreshNotice('busy');
       if (booted) {
         fillWeeks(true);
         renderCurrent();
       } else {
         startUi();
       }
-      const wait = 450 - (Date.now() - started);
+      const beforeGen = previous && previous.meta && previous.meta.generated;
+      const afterGen = state.data.meta && state.data.meta.generated;
+      const mode = beforeGen && beforeGen === afterGen ? 'same' : 'ok';
+      const wait = 800 - (Date.now() - started);
       if (wait > 0) await new Promise(r => setTimeout(r, wait));
-      paintRefreshStatus('ok');
+      paintRefreshStatus(mode);
+      showRefreshNotice(mode);
     } catch (e) {
       if (previous) state.data = previous;
-      const info = generatedAge();
-      const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
-      const msg = offline
-        ? `You're offline. This screen is still showing${info.generated ? ' the data generated ' + info.generated : ' the last data that loaded'}.`
-        : `Couldn't refresh. Check your connection and try again.${info.generated ? ' This screen is still showing the data generated ' + info.generated + '.' : ''}`;
-      showDataStatus(msg, true);
       paintRefreshStatus('fail');
+      showRefreshNotice('fail');
     } finally {
       refreshing = false;
       setRefreshBusy(false);
-      if ($('#refreshStatusText') && $('#refreshStatusText').textContent === 'Updating…') paintRefreshStatus(state.data ? 'idle' : 'fail');
+      const label = $('#refreshStatusText') && $('#refreshStatusText').textContent;
+      if (label === 'Refreshing…') paintRefreshStatus(state.data ? 'idle' : 'fail');
     }
-    if ($('#refreshStatusText') && $('#refreshStatusText').textContent === 'Updated just now') await activateWaitingApp();
+    const label = $('#refreshStatusText') && $('#refreshStatusText').textContent;
+    if (label && (label.indexOf('Updated just now') === 0 || label.indexOf('Already up to date') === 0)) {
+      await activateWaitingApp(label.indexOf('Already up to date') === 0 ? 'same' : 'ok');
+    }
   }
   function bindRefresh() {
     const btn = $('#refreshBtn');
@@ -1221,15 +1321,20 @@
   function startUi() {
     if (booted) return;
     booted = true;
+    const saved = takeSession();
     const safe = (fn, name) => { try { fn(); } catch (e) { console.error(name, e); } };
     safe(initControls, 'controls');
     safe(initSearch, 'search');
     safe(renderBoard, 'board');
-    if (!refreshing) paintRefreshStatus('idle');
+    if (!refreshing && !(saved && saved.banner)) paintRefreshStatus('idle');
     loadLiveInjuries();
     window.ML = { state, SCORING, weatherChip, weatherText, loadWeather, injuryOf, isOut, project, makeDist, gameFor, f1, f2, pct, esc, avatar, statusFlag, newsBadge, hasInjuryNews, openPlayer, rkOrd, fmtKick, tn, setView, compareRows, compareTable, renderNews, renderBoard, refreshData };
-    if (window.MLTeam) window.MLTeam.init();
+    if (window.MLTrade && saved && saved.trade && window.MLTrade.restore) window.MLTrade.restore(saved.trade);
+    const teamReady = window.MLTeam ? window.MLTeam.init() : null;
     if (window.MLTrade) window.MLTrade.init();
+    const finish = () => { if (saved) applySession(saved); };
+    if (teamReady && teamReady.then) teamReady.then(finish, finish);
+    else finish();
   }
   async function boot() {
     initTheme();

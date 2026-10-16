@@ -67,8 +67,12 @@ test('the header refresh button updates data in place and can activate a waiting
   assert.match(css, /#refreshBtn\[aria-busy="true"\] svg \{ animation: ml-spin/);
   assert.match(css, /prefers-reduced-motion: reduce/);
   const app = read('app.js');
-  assert.match(app, /cache: fresh \? 'no-store' : 'no-cache'/);
+  assert.match(app, /cache: fresh \? 'reload' : 'no-cache'/);
   assert.match(app, /&fresh=1/);
+  assert.match(app, /Refreshing…/);
+  assert.match(app, /Already up to date/);
+  assert.match(app, /ml-refresh-session/);
+  assert.match(app, /MLTrade\.restore/);
   assert.match(app, /data\.json/);
   assert.match(app, /market\.json/);
   assert.match(app, /news\.json/);
@@ -85,6 +89,7 @@ test('the header refresh button updates data in place and can activate a waiting
   assert.match(sw, /if \(type === 'SKIP_WAITING'\) self\.skipWaiting\(\)/);
   assert.match(sw, /if \(!self\.registration\.active\) self\.skipWaiting\(\)/);
   assert.match(sw, /searchParams\.has\('fresh'\)/);
+  assert.match(sw, /cache: 'reload'/);
   assert.match(sw, /if \(fresh\) throw err/);
   assert.match(sw, /self\.clients\.claim\(\)/);
   assert.match(sw, /key\.startsWith\('ml-shell-'\) && key !== SHELL_CACHE/);

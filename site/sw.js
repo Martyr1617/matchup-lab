@@ -1,7 +1,7 @@
 /* App shell is stamped so a deploy swaps in a new cache. Projection files stay
    network-first in their own cache, so an update does not discard the last good
    data.json, market.json, or news.json when the network is down. */
-const VER = 'd2b76b4e7a';
+const VER = '1a70044346';
 const SHELL_CACHE = 'ml-shell-' + VER;
 const DATA_CACHE = 'ml-data';
 const VERSIONED = ['styles.css', 'themes.css', 'app.js', 'model.js', 'lineup.js', 'team.js', 'glossary.js', 'trade.js', 'chart.umd.min.js'];
@@ -52,8 +52,13 @@ async function networkFirstData(request) {
   const url = new URL(request.url);
   const stable = new Request(url.origin + url.pathname);
   const fresh = wantsFresh(request);
+  // A refresh must not be answered by the HTTP cache or by ml-data. cache:'reload'
+  // skips the HTTP cache; the fresh flag skips the data cache below.
   try {
-    const res = await fetch(request);
+    // Fresh requests use cache:'reload' so the HTTP cache cannot answer them.
+    const res = fresh
+      ? await fetch(new Request(request.url, { cache: 'reload', mode: 'cors', credentials: 'omit', redirect: 'follow' }))
+      : await fetch(request);
     if (res && res.ok) {
       await cache.put(stable, res.clone());
       return res;

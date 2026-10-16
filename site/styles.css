@@ -182,7 +182,8 @@ select {
 .icon-btn:disabled { cursor: default; }
 .icon-btn svg { width: 18px; height: 18px; }
 .refresh-cluster { display: inline-flex; align-items: center; gap: var(--space-2); }
-.refresh-status { max-width: 8.5rem; color: var(--color-on-header-muted, var(--color-text-muted)); font-size: var(--text-xs); font-weight: 600; line-height: 1.2; text-align: right; }
+.refresh-status { max-width: 11rem; white-space: pre-line; color: var(--color-on-header, var(--color-gold)); font-size: var(--text-xs); font-weight: 700; line-height: 1.25; text-align: right; }
+.notice.ok { background: var(--color-good-bg); color: var(--color-good); }
 .refresh-btn-busy svg, #refreshBtn[aria-busy="true"] svg { animation: ml-spin 0.7s linear infinite; transform-origin: center; }
 @keyframes ml-spin { to { transform: rotate(360deg); } }
 
