@@ -1381,6 +1381,16 @@
     attachTrade(data, { project, scoring: window.MLModel.SCORING, ages: {} });
     return data;
   }
+  function snapshot() {
+    return { a: tradeState.a.slice(), b: tradeState.b.slice() };
+  }
+  function restore(saved) {
+    if (!saved) return;
+    const ids = list => (Array.isArray(list) ? list.filter(id => typeof id === 'string' && id).slice(0, 5) : null);
+    const a = ids(saved.a), b = ids(saved.b);
+    if (a) tradeState.a = a;
+    if (b) tradeState.b = b;
+  }
   function init() {
     if (!$('#view-trade')) return;
     readPrefs();
@@ -1403,6 +1413,6 @@
     parseNews, injuryPlan, sumOutlook, IR_MIN, LONG_DYNASTY,
     ageFromBirth, spearman, adjustSide, gradeGap, analyze, fairer, tierOf, valueOf, attachTrade, backtest, round1,
     fitAdpCurve, blendValue, blendAdp, ADP_WEIGHT,
-    ensure, init, render: renderTrade,
+    ensure, init, render: renderTrade, snapshot, restore,
   };
 });
