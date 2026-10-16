@@ -346,10 +346,9 @@
   function keepCard() {
     if (!T.league || !T.teamId) return '';
     const link = ML.esc(teamLink());
-    const warn = !canSave ? `<div class="notice bad keep">This view can't save teams. <a href="${link}" target="_blank" rel="noopener">Open Matchup Lab in your browser</a> to save them, or use the team link below.</div>`
-      : framed ? `<div class="notice keep">You're viewing Matchup Lab inside another app, which may forget your team. <a href="${link}" target="_blank" rel="noopener">Open it in your browser</a> to keep it saved, or use the team link below.</div>` : '';
-    return `${warn}<div class="keep-row"><button type="button" class="btn sm" id="copyTeamLink">Copy my team link</button><span class="sub" id="copyMsg" aria-live="polite">A link that always opens this team. Bookmark it or add it to your Home Screen.</span>
-      <input class="keep-link" id="teamLinkBox" type="text" readonly value="${link}" aria-label="Your team link" hidden /></div>`;
+    if (!canSave) return `<div class="notice bad keep">This view can't save teams. <a href="${link}" target="_blank" rel="noopener">Open Matchup Lab in your browser</a> to save them.</div>`;
+    if (framed) return `<div class="notice keep">You're viewing Matchup Lab inside another app, which may forget your team. <a href="${link}" target="_blank" rel="noopener">Open it in your browser</a> to keep it saved.</div>`;
+    return '';
   }
 
   const savedTeams = () => { const a = store.get(SAVE_KEY, []); return Array.isArray(a) ? a.filter(x => x && typeof x.hash === 'string' && /^team=(sleeper|espn|manual)\//.test(x.hash)).slice(0, 12) : []; };
@@ -565,18 +564,6 @@
 
   function bind() {
     const el = view();
-    const cp = $('#copyTeamLink', el);
-    if (cp) cp.addEventListener('click', async () => {
-      const link = teamLink(), msg = $('#copyMsg', el);
-      const box = $('#teamLinkBox', el);
-      try { await navigator.clipboard.writeText(link); msg.textContent = 'Copied. Paste it into a bookmark, a note, or a text to yourself.'; }
-      catch (e) {
-        box.hidden = false; box.focus(); box.select();
-        let ok = false; try { ok = document.execCommand('copy'); } catch (e2) { /* ignore */ }
-        msg.textContent = ok ? 'Copied. Paste it into a bookmark, a note, or a text to yourself.' : 'Copying is blocked here. Press and hold the link below to copy it.';
-      }
-      box.hidden = false;
-    });
     $$('.saved-open', el).forEach(b => b.addEventListener('click', () => { if (b.closest('.saved-chip').classList.contains('on')) return; openFromHash(b.dataset.hash); }));
     $$('.saved-x', el).forEach(b => b.addEventListener('click', () => {
       const k = b.dataset.key; forgetTeam(k);
