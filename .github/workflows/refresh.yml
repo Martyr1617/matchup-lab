@@ -76,6 +76,16 @@ jobs:
           git add .
           git commit -qm "Data $(date -u +%Y-%m-%dT%H:%MZ)"
           git push -qf "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" data
+      - name: Archive pre-kickoff projection snapshot
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          # data was replaced above. This step only fast-forwards the snapshots branch.
+          args=(scripts/snapshot_projections.js --data site/data.json --out /tmp/projection-snapshot.json)
+          if [ -s site/market.json ]; then args+=(--market site/market.json); fi
+          node "${args[@]}"
+          python3 scripts/archive_snapshot.py /tmp/projection-snapshot.json --push
       - name: Report a stale or missing market file
         if: success() && steps.market.outputs.status != 'fresh'
         env:
