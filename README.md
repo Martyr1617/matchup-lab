@@ -8,7 +8,16 @@ A scheduled GitHub Actions workflow runs every hour. Each run:
 
 1. Downloads public nflverse / ffverse data: player and team stats, play-by-play, snap counts, Next Gen Stats, PFR advanced stats, expected fantasy points, injuries and the schedule.
 2. Pulls DraftKings spreads, totals and player-prop lines from ESPN's public feed.
-3. Pushes `data.json` and `market.json` to the `data` branch, which the app reads.
+3. Pushes `data.json` and `market.json` to the `data` branch, which the app reads. That branch is force-pushed, so it only keeps the latest file.
+4. Fast-forwards a separate `snapshots` branch (never force-pushed) with a compact projection file, `snapshots/2026/wk06/<timestamp>.json`. Each file has every player's PPR projection, floor, ceiling, and trade value, plus the game total and spread. The latest six hourly files are kept. The first refresh at or after a game's kickoff freezes the last snapshot from before that kickoff under `snapshots/2026/wk06/prekickoff/<game_id>.json`, so Thursday, Sunday early, Sunday late, Sunday night, and Monday each keep their own.
+
+To score a week once games are final:
+
+```
+python scripts/score_week.py --week 6
+```
+
+That reads the pre-kickoff files, pulls actual PPR from nflverse when the week is in the file and from ESPN box scores otherwise, and prints mean absolute error, bias, floor-ceiling coverage, Spearman correlation, and the biggest hits and misses. Add `--season 2026` if you are not scoring the newest season stored on the branch.
 
 The Pages site keeps loading those files from `https://raw.githubusercontent.com/Martyr1617/matchup-lab/data/`. The copies committed under `site/` are the fallback when that branch cannot be reached. The hourly refresh does not deploy the page.
 
@@ -19,7 +28,7 @@ To refresh right away, go to Actions → "Refresh Matchup Lab data" → Run work
 ## Tests
 
 ```
-node --test test/model.test.js test/pwa.test.js test/lineup.test.js
+node --test test/model.test.js test/pwa.test.js test/lineup.test.js test/snapshot.test.js
 python3 -m pytest tests
 ```
 
