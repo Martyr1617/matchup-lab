@@ -54,6 +54,10 @@
   function syncSettingsUI() {
     $$('#appearSeg [data-appearance]').forEach(b => b.setAttribute('aria-checked', b.dataset.appearance === state.appearance ? 'true' : 'false'));
     $$('#themeList .theme-pick').forEach(b => b.setAttribute('aria-pressed', b.dataset.team === state.team ? 'true' : 'false'));
+    const splashBox = $('#splashToggle');
+    const soundBox = $('#splashSoundToggle');
+    if (splashBox) splashBox.checked = splashPrefOn(SPLASH_KEY);
+    if (soundBox) soundBox.checked = splashPrefOn(SPLASH_SOUND_KEY);
   }
   function renderThemeList() {
     const host = $('#themeList');
@@ -125,8 +129,132 @@
     $$('#appearSeg [data-appearance]').forEach(b => b.addEventListener('click', () => setAppearance(b.dataset.appearance)));
     const search = $('#themeSearch');
     if (search) search.addEventListener('input', renderThemeList);
+    const splashBox = $('#splashToggle');
+    const soundBox = $('#splashSoundToggle');
+    if (splashBox) splashBox.addEventListener('change', () => setSplashPref(SPLASH_KEY, splashBox.checked));
+    if (soundBox) soundBox.addEventListener('change', () => setSplashPref(SPLASH_SOUND_KEY, soundBox.checked));
     renderThemeList();
     syncSettingsUI();
+  }
+  const SPLASH_KEY = 'ml-splash';
+  const SPLASH_SOUND_KEY = 'ml-splash-sound';
+  function splashPrefOn(key) {
+    try { return localStorage.getItem(key) !== '0'; } catch (e) { return true; }
+  }
+  function setSplashPref(key, on) {
+    try { localStorage.setItem(key, on ? '1' : '0'); } catch (e) {}
+    if (key === SPLASH_KEY && !on) {
+      const el = $('#splash');
+      if (el) el.hidden = true;
+    }
+  }
+  function wavBlob(buffer) {
+    const samples = buffer.getChannelData(0);
+    const n = samples.length;
+    const out = new ArrayBuffer(44 + n * 2);
+    const view = new DataView(out);
+    const str = (o, s) => { for (let i = 0; i < s.length; i++) view.setUint8(o + i, s.charCodeAt(i)); };
+    str(0, 'RIFF'); view.setUint32(4, 36 + n * 2, true); str(8, 'WAVE'); str(12, 'fmt ');
+    view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+    view.setUint32(24, buffer.sampleRate, true); view.setUint32(28, buffer.sampleRate * 2, true);
+    view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+    str(36, 'data'); view.setUint32(40, n * 2, true);
+    let off = 44;
+    for (let i = 0; i < n; i++) {
+      const x = Math.max(-1, Math.min(1, samples[i]));
+      view.setInt16(off, x < 0 ? x * 0x8000 : x * 0x7fff, true);
+      off += 2;
+    }
+    return new Blob([out], { type: 'audio/wav' });
+  }
+  function synthChant(team) {
+    const seconds = 1.6;
+    const rate = 22050;
+    const ctx = new OfflineAudioContext(1, Math.floor(rate * seconds), rate);
+    let hash = 7;
+    const id = String(team || 'ml');
+    for (let i = 0; i < id.length; i++) hash = (hash * 33 + id.charCodeAt(i)) >>> 0;
+    const root = 174 + (hash % 14) * 18;
+    const beats = 3 + (hash % 3);
+    const master = ctx.createGain();
+    master.gain.value = 0.4;
+    master.connect(ctx.destination);
+    for (let i = 0; i < beats; i++) {
+      const t = 0.08 + i * (1.25 / beats);
+      const noise = ctx.createBuffer(1, Math.floor(rate * 0.09), rate);
+      const data = noise.getChannelData(0);
+      for (let s = 0; s < data.length; s++) data[s] = (Math.random() * 2 - 1) * (1 - s / data.length);
+      const hit = ctx.createBufferSource();
+      hit.buffer = noise;
+      const hg = ctx.createGain();
+      hg.gain.setValueAtTime(0.85, t);
+      hg.gain.exponentialRampToValueAtTime(0.01, t + 0.09);
+      hit.connect(hg); hg.connect(master); hit.start(t);
+      const osc = ctx.createOscillator();
+      osc.type = (hash + i) % 2 ? 'sawtooth' : 'square';
+      osc.frequency.setValueAtTime(root * (i % 2 ? 1.25 : 1), t);
+      const og = ctx.createGain();
+      og.gain.setValueAtTime(0.001, t);
+      og.gain.exponentialRampToValueAtTime(0.28, t + 0.03);
+      og.gain.exponentialRampToValueAtTime(0.001, t + 0.26);
+      osc.connect(og); og.connect(master); osc.start(t); osc.stop(t + 0.28);
+    }
+    return ctx.startRendering();
+  }
+  function playAudioBlob(blob) {
+    return new Promise(resolve => {
+      try {
+        const audio = new Audio();
+        audio.volume = 0.4;
+        if (audio.muted || audio.volume === 0) { resolve(false); return; }
+        const url = URL.createObjectURL(blob);
+        audio.src = url;
+        const done = ok => { URL.revokeObjectURL(url); resolve(ok); };
+        const started = audio.play();
+        if (started && started.then) started.then(() => done(true)).catch(() => done(false));
+        else done(true);
+      } catch (e) { resolve(false); }
+    });
+  }
+  let splashSoundPlayed = false;
+  let splashSoundBusy = false;
+  async function playSplashSound(team) {
+    if (splashSoundPlayed || splashSoundBusy || !splashPrefOn(SPLASH_SOUND_KEY)) return;
+    splashSoundBusy = true;
+    let ok = false;
+    try {
+      try {
+        const res = await fetch('audio/chants/' + encodeURIComponent(team || 'ml') + '.m4a');
+        if (res.ok) ok = await playAudioBlob(await res.blob());
+      } catch (e) { /* a missing clip falls through to the synth */ }
+      if (!ok) {
+        try { ok = await playAudioBlob(wavBlob(await synthChant(team))); } catch (e) { /* stay silent */ }
+      }
+    } finally {
+      splashSoundBusy = false;
+    }
+    if (ok) splashSoundPlayed = true;
+  }
+  function installedApp() {
+    try {
+      if (window.matchMedia('(display-mode: standalone)').matches) return true;
+      if (window.navigator.standalone) return true;
+    } catch (e) {}
+    return false;
+  }
+  function initSplash() {
+    if (!splashPrefOn(SPLASH_SOUND_KEY)) return;
+    if (document.documentElement.getAttribute('data-splash') === 'off') return;
+    const team = window.MLSplashTeam || state.team || 'ml';
+    const start = () => { playSplashSound(team); };
+    if (installedApp() || window.MLSplashTap) start();
+    const once = () => { window.MLSplashTap = true; start(); };
+    document.addEventListener('pointerdown', once, { capture: true, once: true });
+    document.addEventListener('keydown', once, { capture: true, once: true });
+    setTimeout(() => {
+      document.removeEventListener('pointerdown', once, true);
+      document.removeEventListener('keydown', once, true);
+    }, 2200);
   }
 
   const NA = '<span class="na">Unavailable</span>';
@@ -1381,6 +1509,7 @@
   }
   async function boot() {
     initTheme();
+    initSplash();
     bindRefresh();
     $('#boardBody').innerHTML = Array.from({ length: 8 }, () => `<tr><td colspan="9"><div class="skeleton" style="height:40px">&nbsp;</div></td></tr>`).join('');
     const get = (url, ms) => fetchJson(url, ms, false);
