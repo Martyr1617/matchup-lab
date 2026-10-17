@@ -425,6 +425,8 @@ tbody tr:last-child td { border-bottom: 0; }
 .sub.pad { padding-bottom: var(--space-5); }
 .tscroll { overflow-x: auto; }
 .team-table thead th { position: static; }
+.drop-cell { min-width: 14rem; white-space: normal; }
+.drop-why { font-size: var(--text-xs); }
 .slot { display: inline-block; min-width: 46px; text-align: center; padding: 2px 6px; border-radius: 4px; background: var(--color-gold); color: var(--color-gold-ink); font-size: var(--text-xs); font-weight: 700; letter-spacing: 0.04em; }
 .pcell.link { cursor: pointer; }
 .pcell.link:hover .name { text-decoration: underline; }

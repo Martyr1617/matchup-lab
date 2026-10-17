@@ -300,12 +300,13 @@
       }
     }
 
-    // Waiver targets: unrostered players beating your weakest eligible starter
+    // Waiver targets: an available player is an add only when they out-value
+    // the least valuable player you can spare, at any position.
     let waivers = null;
-    if (league.source !== 'manual') {
+    if (league.source !== 'manual' && globalThis.MLWaiver) {
       const rostered = new Set();
       for (const t of league.teams) for (const p of t.players) if (p.ml) rostered.add(p.ml.id);
-      const cands = [];
+      const free = [];
       for (const p of ML.state.data.players) {
         if (p.tradeOnly) continue;
         if (rostered.has(p.id)) continue;
@@ -314,12 +315,14 @@
         const inj = (ML.injuryOf(p) || {}).status || null;
         const e = evalPlayer({ key: 'ml:' + p.id, ml: p, name: p.name, pos: p.pos, team: p.team, inj }, S, week);
         if (e.status !== 'ok') continue;
-        let weakest = null;
-        opt.forEach((s, i) => { const slot = league.slots[i]; if (!ELIG[slot]?.includes(p.pos) || slot === 'K' || slot === 'DEF') return; if (s && s.locked) return; const v = s && s.status === 'ok' ? s.proj : 0; if (!weakest || v < weakest.v) weakest = { v, p: s, slot }; });
-        if (weakest && e.proj - weakest.v >= 1) cands.push({ e, gain: e.proj - weakest.v, over: weakest });
+        free.push(e);
       }
+      const scoring = S.rec >= 0.99 ? 'ppr' : S.rec >= 0.49 ? 'half' : 'std';
+      const qbMode = LUP.isMultiQb(league.slots) ? 'sflex' : 'qb1';
       const perPos = {};
-      waivers = cands.sort((a, b) => b.gain - a.gain).filter(c => (perPos[c.e.pos] = (perPos[c.e.pos] || 0) + 1) <= 2).slice(0, 6);
+      waivers = globalThis.MLWaiver.advise({ roster, opt, slots: league.slots, freeAgents: free, scoring, qbMode })
+        .filter(c => (perPos[c.e.pos] = (perPos[c.e.pos] || 0) + 1) <= 2)
+        .slice(0, 6);
     }
     return { team, roster, opt, current, bench, optStats, curStats, moves, opp, waivers, S };
   }
@@ -510,7 +513,7 @@
     const waiverCard = A.waivers ? `
       <div class="card flush">
         <div class="card-title pad">Waiver wire targets</div>
-        ${A.waivers.length ? `<div class="tscroll"><table class="team-table"><thead><tr><th>Available player</th><th class="c-mu">Matchup</th><th class="num">Proj</th><th>Upgrade over</th></tr></thead><tbody>${A.waivers.map(w => `<tr><td>${playerCell(w.e)}</td><td class="c-mu">${matchupCell(w.e)}</td><td class="num">${projCell(w.e)}</td><td><span class="grade good">+${ML.f1(w.gain)}</span> <span class="sub">vs ${w.over.p ? ML.esc(w.over.p.name) : 'empty'} (${ML.esc(SLOT_LABEL[w.over.slot] || w.over.slot)})</span></td></tr>`).join('')}</tbody></table></div>` : `<p class="sub pad">No unrostered player projects at least 1 point better than your starters this week.</p>`}
+        ${A.waivers.length ? `<div class="tscroll"><table class="team-table"><thead><tr><th>Available player</th><th class="c-mu">Matchup</th><th class="num">Proj</th><th>Suggested drop</th></tr></thead><tbody>${A.waivers.map(w => `<tr><td>${playerCell(w.e)}</td><td class="c-mu">${matchupCell(w.e)}</td><td class="num">${projCell(w.e)}</td><td class="drop-cell"><span class="grade good">+${ML.f1(w.gain)}</span> <span class="drop-why">${ML.esc(w.reason)}</span>${w.altReasons && w.altReasons.length ? `<div class="sub">${w.altReasons.map(r => ML.esc(r)).join('<br>')}</div>` : ''}</td></tr>`).join('')}</tbody></table></div>` : `<p class="sub pad">No available player is worth more than the most expendable player you can drop.</p>`}
       </div>` : '';
 
     const notes = [];
