@@ -1075,72 +1075,66 @@
     for (const wk in data.schedule) data.schedule[wk] = (data.schedule[wk] || []).filter(g => TM.test(g.home) && TM.test(g.away));
     return data;
   }
-  function generatedAge() {
-    const generated = state.data && state.data.meta && state.data.meta.generated;
-    const t = parseGenerated(generated);
-    return { generated, t, age: t == null ? '' : agePhrase(t) };
-  }
-  function whenLine(info) {
-    if (!info || !info.generated) return '';
-    return info.generated + (info.age ? ' (' + info.age + ' old)' : '');
-  }
+  const REFRESH_HOLD_MS = 4000;
+  let refreshFadeGen = 0;
+  let refreshFadeTimer = 0;
   function paintRefreshStatus(mode) {
+    refreshFadeGen += 1;
+    const gen = refreshFadeGen;
+    if (refreshFadeTimer) { clearTimeout(refreshFadeTimer); refreshFadeTimer = 0; }
     const text = $('#refreshStatusText');
     const more = $('#refreshStatusMore');
     const btn = $('#refreshBtn');
     const host = $('#refreshStatus');
-    const info = generatedAge();
-    const when = whenLine(info);
+    if (host) host.classList.remove('is-fading');
+    const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
     let visible = '';
-    let detail = 'Refresh data';
-    if (mode === 'busy') {
-      visible = 'Refreshing…';
-      detail = 'Refreshing projections, odds, and news';
-    } else if (mode === 'fail') {
-      visible = "Couldn't refresh";
-      detail = when
-        ? "Couldn't refresh. This screen is still using the data generated " + when + '.'
-        : "Couldn't refresh. Check your connection and try again.";
-    } else if (mode === 'same') {
-      visible = when ? 'Already up to date\n' + info.generated : 'Already up to date';
-      detail = 'Already up to date.' + (when ? ' Data generated ' + when + '.' : '');
-    } else if (mode === 'ok') {
-      visible = when ? 'Updated just now\n' + info.generated : 'Updated just now';
-      detail = 'Updated just now.' + (when ? ' Data generated ' + when + '.' : '');
-    } else if (info.t != null) {
-      visible = info.age + ' old';
-      detail = 'Data generated ' + info.generated + ', ' + info.age + ' ago.';
-    }
+    if (mode === 'busy') visible = 'Refreshing…';
+    else if (mode === 'fail') visible = offline ? "You're offline" : "Couldn't refresh";
+    else if (mode === 'same') visible = 'Already up to date';
+    else if (mode === 'ok') visible = 'Updated';
     if (text) text.textContent = visible;
-    if (more) more.textContent = detail === visible ? '' : detail;
+    if (more) more.textContent = '';
     if (host) {
       host.classList.toggle('is-busy', mode === 'busy');
       host.classList.toggle('is-ok', mode === 'ok' || mode === 'same');
       host.classList.toggle('is-fail', mode === 'fail');
     }
-    if (btn && mode !== 'busy') btn.setAttribute('aria-label', 'Refresh data. ' + detail);
-    if (btn) btn.title = detail;
-  }
-  function showRefreshNotice(mode) {
-    const info = generatedAge();
-    const when = whenLine(info);
-    if (mode === 'busy') { showDataStatus('Refreshing projections, odds, and news…', false); return; }
-    if (mode === 'same') { showDataStatus('Already up to date.' + (when ? ' Data generated ' + when + '.' : ''), 'ok'); return; }
-    if (mode === 'ok') { showDataStatus('Updated just now.' + (when ? ' Data generated ' + when + '.' : ''), 'ok'); return; }
-    if (mode === 'fail') {
-      const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
-      const msg = offline
-        ? "You're offline. This screen is still showing" + (when ? ' the data generated ' + when : ' the last data that loaded') + '.'
-        : "Couldn't refresh. Check your connection and try again." + (when ? ' This screen is still showing the data generated ' + when + '.' : '');
-      showDataStatus(msg, true);
+    if (btn) {
+      btn.setAttribute('aria-label', 'Refresh data');
+      btn.title = 'Refresh data';
     }
+    if (mode === 'ok' || mode === 'same' || mode === 'fail') {
+      refreshFadeTimer = setTimeout(() => fadeRefreshStatus(gen), REFRESH_HOLD_MS);
+    }
+  }
+  function fadeRefreshStatus(gen) {
+    if (gen !== refreshFadeGen) return;
+    const host = $('#refreshStatus');
+    const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const clear = () => {
+      if (gen !== refreshFadeGen) return;
+      if (host) host.classList.remove('is-fading', 'is-busy', 'is-ok', 'is-fail');
+      const text = $('#refreshStatusText');
+      const more = $('#refreshStatusMore');
+      if (text) text.textContent = '';
+      if (more) more.textContent = '';
+      const btn = $('#refreshBtn');
+      if (btn) {
+        btn.setAttribute('aria-label', 'Refresh data');
+        btn.title = 'Refresh data';
+      }
+    };
+    if (reduce || !host) { clear(); return; }
+    host.classList.add('is-fading');
+    refreshFadeTimer = setTimeout(clear, 400);
   }
   function setRefreshBusy(on) {
     const btn = $('#refreshBtn');
     if (!btn) return;
     btn.setAttribute('aria-busy', on ? 'true' : 'false');
     btn.disabled = !!on;
-    if (on) { paintRefreshStatus('busy'); showRefreshNotice('busy'); }
+    if (on) paintRefreshStatus('busy');
   }
   async function fetchJson(url, ms, fresh) {
     const ctl = new AbortController();
@@ -1213,10 +1207,7 @@
     try { if (saved.trade && window.MLTrade && window.MLTrade.restore) window.MLTrade.restore(saved.trade); } catch (e) { /* trade still renders empty */ }
     if (saved.view && saved.view !== 'board') setView(saved.view);
     else if (state.view === 'board') renderBoard();
-    if (saved.banner) {
-      paintRefreshStatus(saved.banner);
-      showRefreshNotice(saved.banner);
-    }
+    if (saved.banner) paintRefreshStatus(saved.banner);
   }
   async function activateWaitingApp(banner) {
     if (!('serviceWorker' in navigator) || !navigator.serviceWorker.controller) return false;
@@ -1236,7 +1227,7 @@
       });
     }
     if (!worker) return false;
-    saveSession({ banner: banner || 'ok' });
+    saveSession({ banner: banner || '' });
     let reloaded = false;
     const drop = setTimeout(() => {
       if (!reloaded) { try { sessionStorage.removeItem(SESSION_KEY); } catch (e) { /* keep the page as it is */ } }
@@ -1252,13 +1243,61 @@
   }
   let refreshing = false;
   let booted = false;
-  async function refreshData() {
+  const AUTO_MS = 30 * 60 * 1000;
+  const EDIT_RETRY_MS = 60 * 1000;
+  let lastRefreshAt = 0;
+  let refreshTimer = 0;
+  function userIsEditing() {
+    const el = document.activeElement;
+    if (el && el.isContentEditable) return true;
+    if (el && el.tagName === 'TEXTAREA') return true;
+    if (el && el.tagName === 'INPUT') {
+      const type = (el.getAttribute('type') || 'text').toLowerCase();
+      if (!/^(button|submit|reset|checkbox|radio|file|range|color)$/.test(type)) return true;
+    }
+    // Team connect fields are rebuilt on render, so unsaved text has to wait.
+    for (const id of ['slUser', 'esId', 'mnText']) {
+      const field = document.getElementById(id);
+      if (field && field.value !== field.defaultValue) return true;
+    }
+    return false;
+  }
+  function armAutoRefresh(delay) {
+    if (refreshTimer) clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(runAutoRefresh, delay);
+  }
+  async function runAutoRefresh() {
+    refreshTimer = 0;
+    if (document.hidden) return;
+    if (!booted || refreshing || userIsEditing()) { armAutoRefresh(EDIT_RETRY_MS); return; }
+    await refreshData({ silent: true });
+  }
+  function onVisibility() {
+    if (document.hidden) {
+      if (refreshTimer) { clearTimeout(refreshTimer); refreshTimer = 0; }
+      return;
+    }
+    const elapsed = lastRefreshAt ? Date.now() - lastRefreshAt : AUTO_MS;
+    if (elapsed >= AUTO_MS) runAutoRefresh();
+    else armAutoRefresh(AUTO_MS - elapsed);
+  }
+  function bindAutoRefresh() {
+    if (document.documentElement.dataset.autoRefresh) return;
+    document.documentElement.dataset.autoRefresh = '1';
+    if (!lastRefreshAt) lastRefreshAt = Date.now();
+    document.addEventListener('visibilitychange', onVisibility);
+    if (!document.hidden) armAutoRefresh(AUTO_MS);
+  }
+  async function refreshData(opts) {
+    const silent = !!(opts && opts.silent);
     if (refreshing) return;
     refreshing = true;
-    setRefreshBusy(true);
+    if (!silent) setRefreshBusy(true);
     const started = Date.now();
     const q = '?t=' + Date.now() + '&fresh=1';
     const previous = state.data;
+    let refreshed = false;
+    let mode = 'fail';
     try {
       const d = await fetchJson(REMOTE + 'data.json' + q, 12000, true);
       if (!usableData(d)) throw new Error('bad remote');
@@ -1283,33 +1322,36 @@
       indexNews();
       if (window.MLTrade) window.MLTrade.ensure(state.data);
       noteDataFreshness(state.data, 'remote');
-      showRefreshNotice('busy');
       if (booted) {
         fillWeeks(true);
-        renderCurrent();
+        if (!(silent && userIsEditing())) renderCurrent();
       } else {
         startUi();
       }
       const beforeGen = previous && previous.meta && previous.meta.generated;
       const afterGen = state.data.meta && state.data.meta.generated;
-      const mode = beforeGen && beforeGen === afterGen ? 'same' : 'ok';
-      const wait = 800 - (Date.now() - started);
+      mode = beforeGen && beforeGen === afterGen ? 'same' : 'ok';
+      refreshed = true;
+      const wait = silent ? 0 : 800 - (Date.now() - started);
       if (wait > 0) await new Promise(r => setTimeout(r, wait));
-      paintRefreshStatus(mode);
-      showRefreshNotice(mode);
+      if (!silent) paintRefreshStatus(mode);
     } catch (e) {
       if (previous) state.data = previous;
-      paintRefreshStatus('fail');
-      showRefreshNotice('fail');
+      if (!silent) paintRefreshStatus('fail');
     } finally {
       refreshing = false;
-      setRefreshBusy(false);
-      const label = $('#refreshStatusText') && $('#refreshStatusText').textContent;
-      if (label === 'Refreshing…') paintRefreshStatus(state.data ? 'idle' : 'fail');
+      lastRefreshAt = Date.now();
+      if (!silent) {
+        setRefreshBusy(false);
+        const label = $('#refreshStatusText') && $('#refreshStatusText').textContent;
+        if (label === 'Refreshing…') paintRefreshStatus(state.data ? 'idle' : 'fail');
+      }
+      if (!document.hidden) armAutoRefresh(AUTO_MS);
     }
-    const label = $('#refreshStatusText') && $('#refreshStatusText').textContent;
-    if (label && (label.indexOf('Updated just now') === 0 || label.indexOf('Already up to date') === 0)) {
-      await activateWaitingApp(label.indexOf('Already up to date') === 0 ? 'same' : 'ok');
+    if (refreshed && silent && userIsEditing()) {
+      if (!document.hidden) armAutoRefresh(EDIT_RETRY_MS);
+    } else if (refreshed) {
+      await activateWaitingApp(silent ? '' : mode);
     }
   }
   function bindRefresh() {
@@ -1327,6 +1369,7 @@
     safe(initSearch, 'search');
     safe(renderBoard, 'board');
     if (!refreshing && !(saved && saved.banner)) paintRefreshStatus('idle');
+    bindAutoRefresh();
     loadLiveInjuries();
     window.ML = { state, SCORING, weatherChip, weatherText, loadWeather, injuryOf, isOut, project, makeDist, gameFor, f1, f2, pct, esc, avatar, statusFlag, newsBadge, hasInjuryNews, openPlayer, rkOrd, fmtKick, tn, setView, compareRows, compareTable, renderNews, renderBoard, refreshData };
     if (window.MLTrade && saved && saved.trade && window.MLTrade.restore) window.MLTrade.restore(saved.trade);

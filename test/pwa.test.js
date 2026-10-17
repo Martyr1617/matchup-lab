@@ -77,7 +77,8 @@ test('the header refresh button updates data in place and can activate a waiting
   assert.match(app, /market\.json/);
   assert.match(app, /news\.json/);
   assert.match(app, /MLTrade\.ensure\(state\.data\)/);
-  assert.match(app, /Updated just now/);
+  assert.match(app, /visible = 'Updated'/);
+  assert.doesNotMatch(app, /Updated just now/);
   assert.match(app, /Couldn't refresh/);
   assert.match(app, /You're offline/);
   assert.match(app, /state\.view = view/);
@@ -94,6 +95,41 @@ test('the header refresh button updates data in place and can activate a waiting
   assert.match(sw, /self\.clients\.claim\(\)/);
   assert.match(sw, /key\.startsWith\('ml-shell-'\) && key !== SHELL_CACHE/);
   assert.doesNotMatch(sw, /caches\.delete\(DATA_CACHE\)|caches\.delete\('ml-data'\)/);
+});
+
+test('refresh status is a short fading label and data refreshes itself every 30 minutes', () => {
+  const app = read('app.js');
+  const css = read('styles.css');
+  const paint = app.slice(app.indexOf('function paintRefreshStatus'), app.indexOf('function fadeRefreshStatus'));
+  assert.match(paint, /visible = 'Refreshing…'/);
+  assert.match(paint, /visible = 'Already up to date'/);
+  assert.match(paint, /visible = 'Updated'/);
+  assert.match(paint, /Couldn't refresh/);
+  assert.match(paint, /You're offline/);
+  assert.doesNotMatch(paint, /generated|UTC|just now|\\n/);
+  assert.match(app, /const REFRESH_HOLD_MS = 4000/);
+  assert.match(app, /function fadeRefreshStatus/);
+  assert.match(app, /is-fading/);
+  assert.match(app, /prefers-reduced-motion: reduce/);
+  assert.match(css, /\.refresh-status\.is-fading \{ opacity: 0; \}/);
+  assert.doesNotMatch(css, /\.refresh-status \{[^}]*white-space: pre-line/);
+  assert.match(app, /const AUTO_MS = 30 \* 60 \* 1000/);
+  assert.match(app, /refreshData\(\{ silent: true \}\)/);
+  assert.match(app, /document\.addEventListener\('visibilitychange', onVisibility\)/);
+  assert.match(app, /document\.hidden/);
+  assert.match(app, /function userIsEditing/);
+  assert.match(app, /isContentEditable/);
+  assert.match(app, /slUser/);
+  assert.match(app, /if \(!\(silent && userIsEditing\(\)\)\) renderCurrent\(\)/);
+  assert.match(app, /state\.view = view/);
+  assert.match(app, /state\.week = week/);
+  const auto = app.slice(app.indexOf('async function runAutoRefresh'), app.indexOf('function onVisibility'));
+  assert.match(auto, /document\.hidden/);
+  assert.match(auto, /userIsEditing\(\)/);
+  assert.match(auto, /silent: true/);
+  const shown = app.slice(app.indexOf('function onVisibility'), app.indexOf('function bindAutoRefresh'));
+  assert.match(shown, /elapsed >= AUTO_MS/);
+  assert.match(shown, /clearTimeout\(refreshTimer\)/);
 });
 
 test('my team has no copy-link control and still saves and lines up', () => {
