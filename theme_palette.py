@@ -103,21 +103,162 @@ def ink_for(fill):
     return dark if contrast(fill, dark) >= contrast(fill, light) else light
 
 
-def clamp_lum(color, max_lum=None, min_lum=None):
-    c = rgb(color)
-    if max_lum is not None and lum(c) > max_lum:
-        for i in range(1, 41):
-            nxt = mix(c, (4, 5, 7), i / 40)
-            if lum(nxt) <= max_lum:
-                return hex_of(nxt)
-        return hex_of(mix(c, (4, 5, 7), 1))
-    if min_lum is not None and lum(c) < min_lum:
-        for i in range(1, 41):
-            nxt = mix(c, (255, 252, 246), i / 40)
-            if lum(nxt) >= min_lum:
-                return hex_of(nxt)
-        return hex_of(mix(c, (255, 252, 246), 1))
-    return color
+# Matchup Lab's own field and gold. A team block must not reuse these, or the
+# page still reads as the default green and yellow theme.
+BANNED = {
+    '#0b3d24', '#062016', '#0a2e1d', '#04140d', '#123d28', '#184a32', '#1f5a3c',
+    '#0c2619', '#123221', '#173e29', '#24563c', '#1a4630', '#2f6d4c',
+    '#1c4a28', '#16381f', '#1c4d34', '#163528', '#3d3410', '#3a3012',
+    '#f5c518', '#ffd84a', '#1a1402', '#b7e4c7', '#c6f5a8',
+}
+
+# Same luminance steps as the default field, so a club colors the whole page
+# instead of a pale wash. Light is the brighter field; dark is the deeper one.
+FIELD = {
+    True: dict(bg=0.024, surface=0.042, surface2=0.062, offset=0.088, border=0.135, field=0.040, deep=0.014),
+    False: dict(bg=0.008, surface=0.018, surface2=0.030, offset=0.046, border=0.078, field=0.016, deep=0.006),
+}
+
+
+def set_lum(color, target):
+    """Move luminance to `target` by mixing with black or white, keeping hue."""
+    c = rgb(color) if isinstance(color, str) else color
+    cur = lum(c)
+    if abs(cur - target) < 0.0008:
+        return hex_of(c)
+    anchor = (0, 0, 0) if cur > target else (255, 255, 255)
+    lo, hi = 0.0, 1.0
+    best = c
+    for _ in range(24):
+        t = (lo + hi) / 2
+        nxt = mix(c, anchor, t)
+        best = nxt
+        got = lum(nxt)
+        if abs(got - target) < 0.0008:
+            break
+        if (got > target) == (cur > target):
+            lo = t
+        else:
+            hi = t
+    return hex_of(best)
+
+
+def chroma(color):
+    r, g, b = (v / 255 for v in (rgb(color) if isinstance(color, str) else color))
+    mx, mn = max(r, g, b), min(r, g, b)
+    return 0.0 if mx <= 1e-9 else (mx - mn) / mx
+
+
+def nudge(color):
+    """Step off an exact default-theme hex without leaving the hue."""
+    if not isinstance(color, str) or not color.startswith('#'):
+        return color
+    c = color.lower()
+    for _ in range(6):
+        if c not in BANNED:
+            return c
+        vals = list(rgb(c))
+        i = max(range(3), key=lambda k: vals[k])
+        vals[i] = vals[i] - 16 if vals[i] >= 16 else vals[i] + 16
+        c = hex_of(vals)
+    return c
+
+
+def paint_seed(primary, secondary):
+    """Field hue. A black, white, or gray swatch yields to the other color."""
+    def colored(c):
+        return chroma(c) >= 0.08 and lum(rgb(c)) >= 0.004
+    if colored(primary):
+        return primary
+    if colored(secondary):
+        return secondary
+    return secondary if lum(rgb(secondary)) >= lum(rgb(primary)) else primary
+
+
+def boost(color, target=0.58):
+    """Saturate a dull team color so the field reads as strongly as the default green.
+
+    Near-grays (silver, black) are left alone so a Raiders theme stays metal.
+    """
+    ch = chroma(color)
+    if ch < 0.08 or ch >= target:
+        return color
+    r, g, b = rgb(color)
+    mx, mn = max(r, g, b), min(r, g, b)
+    span = mx - mn
+    pure = tuple((v - mn) / span * 255 for v in (r, g, b))
+    amt = min(1.0, (target - ch) / target)
+    return hex_of(tuple((r, g, b)[i] * (1 - amt) + pure[i] * amt for i in range(3)))
+
+
+def accent_source(primary, secondary, field):
+    """The swatch that should pop on the field. A near-black swatch yields to the field hue."""
+    other = secondary if field.lower() == primary.lower() else primary
+    # Relative chroma of a near-black hex is noise (a 16,24,32 "navy" is still black).
+    if lum(rgb(other)) < 0.04:
+        return field
+    if chroma(other) >= 0.06 or lum(rgb(other)) >= 0.2:
+        return other
+    return field
+
+
+def hsl_hex(h, s, lit):
+    h = h % 360
+    c = (1 - abs(2 * lit - 1)) * s
+    hp = h / 60
+    x = c * (1 - abs(hp % 2 - 1))
+    if hp < 1:
+        r, g, b = c, x, 0
+    elif hp < 2:
+        r, g, b = x, c, 0
+    elif hp < 3:
+        r, g, b = 0, c, x
+    elif hp < 4:
+        r, g, b = 0, x, c
+    elif hp < 5:
+        r, g, b = x, 0, c
+    else:
+        r, g, b = c, 0, x
+    m = lit - c / 2
+    return hex_of(((r + m) * 255, (g + m) * 255, (b + m) * 255))
+
+
+def readable_accent(seed, surfaces):
+    """Bright team color used as text and as a button fill.
+
+    An official swatch is kept when it already clears AA. A dark red or navy
+    is lifted in its own hue before any mix toward white, so it stays a team
+    color instead of turning gray-pink.
+    """
+    dark, light = '#14120e', '#f7f4ea'
+
+    def ink_of(c):
+        if contrast(c, dark) >= 4.5:
+            return dark
+        if contrast(c, light) >= 4.5:
+            return light
+        return None
+
+    def passes(c):
+        ink = ink_of(c)
+        if ink and all(contrast(c, s) >= 4.5 for s in surfaces):
+            return ink
+        return None
+
+    ink = passes(seed)
+    if ink:
+        return nudge(seed), ink
+    h = hue_deg(seed)
+    start = seed if h is None else hsl_hex(h, 0.84, 0.62)
+    ink = passes(start)
+    if ink:
+        return nudge(start), ink
+    for i in range(1, 41):
+        c = hex_of(mix(rgb(start), (255, 255, 255), i / 40))
+        ink = passes(c)
+        if ink:
+            return nudge(c), ink
+    return nudge('#f4efe2'), dark
 
 
 def channel_dist(a, b):
@@ -190,104 +331,119 @@ def text_on(bg, seed, minimum=4.5, light_mode=True):
 
 
 def palette(primary, secondary, light):
-    p, s = rgb(primary), rgb(secondary)
-    if light:
-        bg = clamp_lum(hex_of(mix((248, 246, 241), p, 0.05)), min_lum=0.86)
-        surface = clamp_lum(hex_of(mix((255, 253, 249), p, 0.03)), min_lum=0.90)
-        surface2 = clamp_lum(hex_of(mix((255, 253, 249), p, 0.08)), min_lum=0.84)
-        offset = clamp_lum(hex_of(mix((255, 253, 249), p, 0.13)), min_lum=0.78)
-        border = text_on(surface, hex_of(mix((255, 253, 249), p, 0.28)), 1.8, True)
-        divider = text_on(surface, hex_of(mix(surface2 and rgb(surface2), p, 0.2)), 1.4, True)
-        text = text_on(surface, hex_of(mix((22, 18, 14), p, 0.22)), 7.0, True)
-        muted = text_on(surface2, hex_of(mix((54, 46, 36), p, 0.28)), 4.5, True)
-        faint = text_on(surface, hex_of(mix((78, 68, 54), p, 0.25)), 4.5, True)
-        field = readable_fill(primary, surface)[0]
-        field_deep = toward(primary, '#07080a', '#f7f4ea', 8.0, cap=0.88)
-        # Header is a deep team color. Foreground must be light.
-        on_header = text_on(field_deep, secondary if contrast(secondary, field_deep) >= contrast(primary, field_deep) else primary, 4.5, False)
-        on_header = text_on(field_deep, on_header, 4.5, False)
-        on_header_muted = text_on(field_deep, hex_of(mix(rgb(on_header), rgb(field_deep), 0.28)), 4.5, False)
-        scheme = 'light'
-        zebra = offset
-    else:
-        bg = hex_of(mix((6, 7, 9), p, 0.22))
-        surface = hex_of(mix((8, 10, 12), p, 0.34))
-        surface2 = hex_of(mix((10, 12, 14), p, 0.46))
-        offset = hex_of(mix((12, 14, 16), p, 0.55))
-        # Keep surfaces actually dark even for light primaries (gold, silver, aqua).
-        bg = clamp_lum(bg, max_lum=0.035)
-        surface = clamp_lum(surface, max_lum=0.055)
-        surface2 = clamp_lum(surface2, max_lum=0.08)
-        if contrast(surface2, surface) < 1.12:
-            surface2 = hex_of(mix(rgb(surface), (255, 255, 255), 0.10))
-        surface2 = clamp_lum(surface2, max_lum=0.09)
-        offset = clamp_lum(hex_of(mix(rgb(surface2), (255, 255, 255), 0.08)), max_lum=0.12)
-        border = text_on(surface, hex_of(mix(rgb(surface2), (255, 255, 255), 0.35)), 1.45, False)
-        divider = border
-        text = text_on(surface, '#f7f4ea', 7.0, False)
-        muted = text_on(surface2, '#d9d3c6', 4.5, False)
-        faint = text_on(surface, '#c4beb2', 4.5, False)
-        field_deep = clamp_lum(hex_of(mix((6, 8, 12), p, 0.78)), max_lum=0.05)
-        field = field_deep
-        on_header = text_on(field_deep, secondary if lum(s) > lum(p) else primary, 4.5, False)
-        on_header_muted = text_on(field_deep, hex_of(mix(rgb(on_header), rgb(field_deep), 0.35)), 4.5, False)
-        scheme = 'dark'
-        zebra = offset
+    """A full team field at the same depth as the default green theme.
 
-    # Projection numbers use --color-gold as text. Pills use it as a fill with --color-gold-ink.
-    # A mid orange can clear a very dark surface and still fail as a button label, so keep
-    # walking toward black or white until both pairs pass.
-    accent_seed = secondary if contrast(secondary, surface) >= contrast(primary, surface) else primary
-    ink_target = '#f7f4ea' if light else '#14120e'
-    text_target = '#14120e' if light else '#f7f4ea'
-    gold, gold_ink = text_target, ink_target
-    for i in range(0, 41):
-        c = hex_of(mix(rgb(accent_seed), rgb(text_target), i / 40))
-        if contrast(c, surface) >= 4.5 and contrast(c, bg) >= 4.5 and contrast(c, ink_target) >= 4.5:
-            gold, gold_ink = c, ink_target
-            break
+    Both modes stay dark enough for light text, matching Matchup Lab itself.
+    Light is the brighter club field; dark is a deeper shade of the same hue.
+    Near-black or near-white primaries take their tint from the other swatch.
+    """
+    step = FIELD[light]
+    raw = paint_seed(primary, secondary)
+    seed = boost(raw)
+    bg = nudge(set_lum(seed, step['bg']))
+    surface = nudge(set_lum(seed, step['surface']))
+    surface2 = nudge(set_lum(seed, step['surface2']))
+    offset = nudge(set_lum(seed, step['offset']))
+    border = nudge(set_lum(seed, step['border']))
+    divider = nudge(set_lum(seed, (step['surface2'] + step['border']) / 2))
+    field = nudge(set_lum(seed, step['field']))
+    field_deep = nudge(set_lum(seed, step['deep']))
 
-    btn, btn_ink = pick_button(primary, secondary, surface, light)
-    btn_hover = hex_of(mix(rgb(btn), (255, 255, 255) if not light else (0, 0, 0), 0.12))
-    if contrast(btn_hover, btn_ink) < 4.5:
-        btn_hover = btn
+    text = nudge(text_on(surface, '#f7f4ea', 7.0, False))
+    muted = nudge(text_on(surface2, '#d9d3c6', 4.5, False))
+    faint = nudge(text_on(surface, '#c4beb2', 4.5, False))
+    # Muted and faint copy also sits on the page background and on cards.
+    muted = nudge(text_on(bg, muted, 4.5, False))
+    faint = nudge(text_on(surface, faint, 4.5, False))
 
-    link = text_on(surface, primary, 4.5, light)
-    floor = text_on(surface, secondary if contrast(secondary, gold) > 1.2 else primary, 4.5, light)
-    ceil_c = gold
-    if contrast(floor, ceil_c) < 1.25:
-        floor = text_on(surface, primary, 4.5, light)
+    gold, gold_ink = readable_accent(accent_source(primary, secondary, raw), (surface, bg, field_deep))
+    hover = hex_of(mix(rgb(gold), (255, 255, 255), 0.16))
+    if contrast(hover, gold_ink) < 4.5:
+        hover = gold
+    hover = nudge(hover)
 
-    def semantic(hue_dark, hue_light):
-        seed = hue_dark if light else hue_light
-        color = text_on(surface, seed, 4.5, light)
-        bg_c = hex_of(mix(rgb(surface), rgb(color), 0.16 if light else 0.28))
-        if contrast(color, bg_c) < 4.5:
-            bg_c = hex_of(mix(rgb(surface), rgb(color), 0.10 if light else 0.18))
-        if contrast(color, bg_c) < 4.5:
-            # Pull the fill back toward the surface until the text clears.
-            for i in range(1, 20):
-                bg_c = hex_of(mix(rgb(color), rgb(surface), i / 20))
-                if contrast(color, bg_c) >= 4.5:
+    on_header = gold if contrast(gold, field_deep) >= 4.5 else text
+    on_header_muted = nudge(text_on(
+        field_deep, hex_of(mix(rgb(on_header), rgb(field_deep), 0.42)), 4.5, False,
+    ))
+
+    def hue_dist(a, b):
+        ha, hb = hue_deg(a), hue_deg(b)
+        if ha is None or hb is None:
+            return 0 if channel_dist(a, b) < 40 else 180
+        d = abs(ha - hb)
+        return min(d, 360 - d)
+
+    def semantic(options, avoid):
+        fallback = None
+        fallback_gap = -1
+        chosen = None
+        for opt in options:
+            color = nudge(text_on(surface, opt, 4.5, False))
+            if contrast(color, surface) < 4.5:
+                continue
+            gap = min(hue_dist(color, a) for a in avoid)
+            if gap > fallback_gap:
+                fallback_gap = gap
+                fallback = color
+            # Hue distance is what keeps a grade readable on a team field.
+            # Two light pastels can share a luminance and still read as different colors.
+            if gap >= 40:
+                chosen = color
+                break
+        if chosen is None:
+            chosen = fallback or nudge(text_on(surface, options[-1], 4.5, False))
+        if min(hue_dist(chosen, a) for a in avoid) < 40:
+            base = hue_deg(chosen) or 200
+            for shift in (40, 60, 80, 100, 130, 160, 200, 230):
+                trial = nudge(text_on(surface, hsl_hex((base + shift) % 360, 0.74, 0.70), 4.5, False))
+                if contrast(trial, surface) < 4.5:
+                    continue
+                if min(hue_dist(trial, a) for a in avoid) >= 40:
+                    chosen = trial
                     break
-        return color, bg_c
+        bg_c = surface
+        for i in range(2, 24):
+            trial = hex_of(mix(rgb(surface), rgb(chosen), i / 28))
+            if contrast(chosen, trial) >= 4.5:
+                bg_c = trial
+                break
+        return chosen, nudge(bg_c)
 
-    good, good_bg = semantic('#0f6b34', '#b7e4c7')
-    bad, bad_bg = semantic('#9f1d1d', '#ffb4b4')
-    warn, warn_bg = semantic('#8a5a00', '#ffe08a')
+    avoid = [gold, primary, secondary]
+    good, good_bg = semantic(
+        ('#3ddc97', '#1faa7a', '#5eb0ff', '#7aa2ff', '#c6f0a4', '#8af0d8'), avoid,
+    )
+    bad, bad_bg = semantic(
+        ('#ff6b6b', '#ff5d8f', '#ff4d6d', '#e85d4c', '#ff7ad9', '#ff8fab'), avoid + [good],
+    )
+    warn, warn_bg = semantic(
+        ('#ffbf70', '#ffd166', '#f4a261', '#e0aaff', '#c77dff', '#ff9f1c'), avoid + [good, bad],
+    )
 
-    chart_line = text_on(surface, primary, 3.0, light)
-    chart_floor = text_on(surface, floor, 3.0, light)
-    chart_ceil = text_on(surface, secondary, 3.0, light)
-    if contrast(chart_line, chart_ceil) < 1.2:
-        chart_ceil = text_on(surface, gold, 3.0, light)
+    floor_src = primary if not hue_close(primary, gold) else '#9fd4ff'
+    floor = nudge(text_on(surface, floor_src, 4.5, False))
+    if hue_close(floor, gold) or contrast(floor, gold) < 1.3:
+        for alt in ('#9fd4ff', '#d4c4ff', '#ffb0c8'):
+            if not hue_close(alt, gold):
+                floor = nudge(text_on(surface, alt, 4.5, False))
+                break
+    ceil_c = gold
+
+    chart_src = boost(primary) if chroma(primary) >= 0.08 else '#d5dde8'
+    chart_line = nudge(text_on(surface, chart_src, 3.0, False))
+    if contrast(chart_line, gold) < 1.25 or hue_close(chart_line, gold):
+        # Gold-on-gold clubs (Steelers, Saints) keep the curve in the paper color
+        # so it stays on the team field instead of jumping to an unrelated hue.
+        chart_line = text if contrast(text, surface) >= 3.0 else nudge(text_on(surface, '#f7f4ea', 3.0, False))
+    chart_floor = floor if contrast(floor, surface) >= 3.0 else nudge(text_on(surface, floor, 3.0, False))
+    chart_ceil = gold
     pr, pg, pb = rgb(chart_line)
-    chart_fill = 'rgba(%d, %d, %d, %.2f)' % (pr, pg, pb, 0.20 if light else 0.28)
-
-    highlight = hex_of(mix(rgb(surface), rgb(btn), 0.22))
+    chart_fill = 'rgba(%d, %d, %d, %.2f)' % (pr, pg, pb, 0.28 if light else 0.34)
+    highlight = nudge(hex_of(mix(rgb(surface), rgb(gold), 0.34)))
 
     return {
-        'color-scheme': scheme,
+        'color-scheme': 'dark',
         '--color-bg': bg,
         '--color-surface': surface,
         '--color-surface-2': surface2,
@@ -300,18 +456,18 @@ def palette(primary, secondary, light):
         '--color-field': field,
         '--color-field-deep': field_deep,
         '--color-gold': gold,
-        '--color-gold-bright': btn_hover if contrast(btn_hover, gold_ink) >= 4.5 else gold,
+        '--color-gold-bright': hover,
         '--color-gold-ink': gold_ink,
         '--color-floor': floor,
         '--color-ceil': ceil_c,
-        '--color-primary': btn,
-        '--color-primary-hover': btn_hover,
+        '--color-primary': gold,
+        '--color-primary-hover': hover,
         '--color-primary-highlight': highlight,
-        '--color-primary-ink': btn_ink,
-        '--color-link': link,
+        '--color-primary-ink': gold_ink,
+        '--color-link': gold,
         '--color-on-header': on_header,
         '--color-on-header-muted': on_header_muted,
-        '--color-zebra': zebra,
+        '--color-zebra': offset,
         '--color-good': good,
         '--color-good-bg': good_bg,
         '--color-bad': bad,
@@ -382,6 +538,12 @@ def main():
         '  if (meta) meta.setAttribute(\'content\', found.chrome[mode]);\n'
         '  window.MLThemes = THEMES;\n'
         '  window.MLThemeBoot = { appearance: appearance, team: team, mode: mode };\n'
+        '  var splashOff = false;\n'
+        '  try {\n'
+        "    if (localStorage.getItem('ml-splash') === '0') splashOff = true;\n"
+        "    if (sessionStorage.getItem('ml-splash-shown') === '1') splashOff = true;\n"
+        '  } catch (e) {}\n'
+        "  if (splashOff) root.setAttribute('data-splash', 'off');\n"
         '})();\n'
         '</script>\n'
     ) % json.dumps(catalog, separators=(',', ':'))
