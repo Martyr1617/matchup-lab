@@ -40,12 +40,59 @@
   if (meta) meta.setAttribute('content', found.chrome[mode]);
   window.MLThemes = THEMES;
   window.MLThemeBoot = { appearance: appearance, team: team, mode: mode };
+  var splashOff = false;
+  try {
+    if (localStorage.getItem('ml-splash') === '0') splashOff = true;
+    if (sessionStorage.getItem('ml-splash-shown') === '1') splashOff = true;
+  } catch (e) {}
+  if (splashOff) root.setAttribute('data-splash', 'off');
 })();
 </script>
-<link rel="stylesheet" href="styles.css?v=443ab5b658" />
-<link rel="stylesheet" href="themes.css?v=443ab5b658" />
+<script src="chants.js?v=dcbe605776"></script>
+<link rel="stylesheet" href="styles.css?v=dcbe605776" />
+<link rel="stylesheet" href="themes.css?v=dcbe605776" />
 </head>
 <body>
+<div id="splash" class="splash">
+  <button type="button" id="splashSkip" class="splash-skip" aria-label="Skip the opening splash">
+    <span id="splashMark" class="splash-mark" hidden>
+      <svg viewBox="0 0 120 72" aria-hidden="true">
+        <path fill="none" stroke="currentColor" stroke-width="10" d="M8 64 L8 8 L32 36 L56 8 L56 64"/>
+        <path fill="none" stroke="currentColor" stroke-width="10" d="M78 8 L78 56 L112 56"/>
+      </svg>
+    </span>
+    <span id="splashChant" class="splash-chant">MATCHUP LAB</span>
+    <span class="splash-bar" aria-hidden="true"></span>
+  </button>
+</div>
+<script>
+(function () {
+  var el = document.getElementById('splash');
+  if (!el || document.documentElement.getAttribute('data-splash') === 'off') return;
+  var team = document.documentElement.getAttribute('data-team') || 'ml';
+  var chants = window.MLChants || {};
+  var text = chants[team] || chants.ml || 'MATCHUP LAB';
+  var chant = document.getElementById('splashChant');
+  if (chant) chant.textContent = text;
+  var mark = document.getElementById('splashMark');
+  if (mark) mark.hidden = team !== 'ml';
+  var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduce) el.classList.add('is-still');
+  try { sessionStorage.setItem('ml-splash-shown', '1'); } catch (e) {}
+  window.MLSplashTeam = team;
+  var gone = false;
+  function hide() {
+    if (gone) return;
+    gone = true;
+    el.classList.add('is-out');
+    setTimeout(function () { el.hidden = true; }, reduce ? 0 : 350);
+  }
+  var skip = document.getElementById('splashSkip');
+  if (skip) skip.addEventListener('click', hide);
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') hide(); });
+  setTimeout(hide, reduce ? 500 : 1700);
+})();
+</script>
 <div class="app">
   <header class="topbar">
     <a class="brand" href="#" id="brandLink" aria-label="Matchup Lab home">
@@ -331,6 +378,15 @@
         </div>
       </div>
       <div class="settings-block">
+        <h3 id="splashLabel">Opening splash</h3>
+        <label class="check" for="splashToggle"><input id="splashToggle" type="checkbox" checked /> Show the opening splash</label>
+        <label class="check" for="splashSoundToggle"><input id="splashSoundToggle" type="checkbox" checked /> Splash sound</label>
+      </div>
+      <div class="settings-block">
+        <h3>Sound credits</h3>
+        <p class="sub" id="splashCredits">The splash sound is synthesized in this browser: a short drum and horn pattern, different for each team. No team, NFL, or broadcast recordings are included.</p>
+      </div>
+      <div class="settings-block">
         <label class="settings-label" for="themeSearch">Theme</label>
         <input id="themeSearch" type="search" placeholder="Search teams" autocomplete="off" />
         <div id="themeList" class="theme-list"></div>
@@ -339,14 +395,14 @@
   </div>
 </div>
 
-<script>window.ML_VER="443ab5b658";</script>
-<script src="chart.umd.min.js?v=443ab5b658"></script>
-<script src="lineup.js?v=443ab5b658"></script>
-<script src="team.js?v=443ab5b658"></script>
-<script src="glossary.js?v=443ab5b658"></script>
-<script src="model.js?v=443ab5b658"></script>
-<script src="trade.js?v=443ab5b658"></script>
-<script src="app.js?v=443ab5b658"></script>
+<script>window.ML_VER="dcbe605776";</script>
+<script src="chart.umd.min.js?v=dcbe605776"></script>
+<script src="lineup.js?v=dcbe605776"></script>
+<script src="team.js?v=dcbe605776"></script>
+<script src="glossary.js?v=dcbe605776"></script>
+<script src="model.js?v=dcbe605776"></script>
+<script src="trade.js?v=dcbe605776"></script>
+<script src="app.js?v=dcbe605776"></script>
 <script>
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' });
 </script>
