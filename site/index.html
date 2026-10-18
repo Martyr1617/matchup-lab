@@ -48,15 +48,24 @@
   if (splashOff) root.setAttribute('data-splash', 'off');
 })();
 </script>
-<script src="chants.js?v=ccdf3b58c6"></script>
-<link rel="stylesheet" href="styles.css?v=ccdf3b58c6" />
-<link rel="stylesheet" href="themes.css?v=ccdf3b58c6" />
+<script src="chants.js?v=7ad28ecf5d"></script>
+<link rel="stylesheet" href="styles.css?v=7ad28ecf5d" />
+<link rel="stylesheet" href="themes.css?v=7ad28ecf5d" />
 </head>
 <body>
 <div id="splash" class="splash">
   <div class="splash-lights" aria-hidden="true">
-    <div class="splash-lights-glow"><span class="splash-lights-beam"></span></div>
-    <div class="splash-lights-ring"><span class="splash-lights-beam"></span></div>
+    <div class="splash-lights-track"></div>
+    <div class="splash-lights-glow">
+      <span class="splash-lights-beam"></span>
+      <span class="splash-lights-beam splash-lights-beam-back"></span>
+    </div>
+    <div class="splash-lights-ring">
+      <span class="splash-lights-beam"></span>
+      <span class="splash-lights-beam splash-lights-beam-back"></span>
+    </div>
+    <div class="splash-lights-corners"></div>
+    <div class="splash-lights-flash"></div>
   </div>
   <button type="button" id="splashSkip" class="splash-skip" aria-label="Skip the opening splash">
     <span id="splashMark" class="splash-mark" hidden>
@@ -82,6 +91,7 @@
   if (mark) mark.hidden = team !== 'ml';
   var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (reduce) el.classList.add('is-still');
+  else if (window.CSS && CSS.registerProperty) el.classList.add('splash-angle');
   try { sessionStorage.setItem('ml-splash-shown', '1'); } catch (e) {}
   window.MLSplashTeam = team;
   var gone = false;
@@ -94,7 +104,7 @@
   var skip = document.getElementById('splashSkip');
   if (skip) skip.addEventListener('click', hide);
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape') hide(); });
-  setTimeout(hide, reduce ? 500 : 1700);
+  setTimeout(hide, reduce ? 500 : 2000);
 })();
 </script>
 <div class="app">
@@ -399,15 +409,15 @@
   </div>
 </div>
 
-<script>window.ML_VER="ccdf3b58c6";</script>
-<script src="chart.umd.min.js?v=ccdf3b58c6"></script>
-<script src="lineup.js?v=ccdf3b58c6"></script>
-<script src="waiver.js?v=ccdf3b58c6"></script>
-<script src="team.js?v=ccdf3b58c6"></script>
-<script src="glossary.js?v=ccdf3b58c6"></script>
-<script src="model.js?v=ccdf3b58c6"></script>
-<script src="trade.js?v=ccdf3b58c6"></script>
-<script src="app.js?v=ccdf3b58c6"></script>
+<script>window.ML_VER="7ad28ecf5d";</script>
+<script src="chart.umd.min.js?v=7ad28ecf5d"></script>
+<script src="lineup.js?v=7ad28ecf5d"></script>
+<script src="waiver.js?v=7ad28ecf5d"></script>
+<script src="team.js?v=7ad28ecf5d"></script>
+<script src="glossary.js?v=7ad28ecf5d"></script>
+<script src="model.js?v=7ad28ecf5d"></script>
+<script src="trade.js?v=7ad28ecf5d"></script>
+<script src="app.js?v=7ad28ecf5d"></script>
 <script>
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' });
 </script>
