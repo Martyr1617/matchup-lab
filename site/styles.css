@@ -630,7 +630,65 @@ html[data-splash="off"] .splash { display: none !important; }
 }
 .splash[hidden] { display: none !important; }
 .splash.is-out { opacity: 0; transition: opacity 0.35s ease; }
+.splash-lights {
+  --splash-edge: color-mix(in oklab, var(--color-border) 62%, white);
+  position: absolute;
+  z-index: 0;
+  pointer-events: none;
+  inset:
+    calc(8px + env(safe-area-inset-top, 0px))
+    calc(8px + env(safe-area-inset-right, 0px))
+    calc(8px + env(safe-area-inset-bottom, 0px))
+    calc(8px + env(safe-area-inset-left, 0px));
+  border-radius: 42px;
+  background:
+    linear-gradient(to bottom, color-mix(in oklab, var(--color-gold) 40%, transparent), transparent 26%),
+    linear-gradient(to top, color-mix(in oklab, var(--splash-edge) 48%, transparent), transparent 24%),
+    linear-gradient(to right, color-mix(in oklab, var(--splash-edge) 34%, transparent), transparent 16%),
+    linear-gradient(to left, color-mix(in oklab, var(--color-gold) 30%, transparent), transparent 16%);
+}
+.splash-lights-glow,
+.splash-lights-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+}
+.splash-lights-glow { filter: blur(12px); opacity: 0.92; }
+.splash-lights-beam {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  overflow: hidden;
+  padding: 3px;
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+}
+.splash-lights-glow .splash-lights-beam { padding: 8px; }
+.splash-lights-beam::before {
+  content: "";
+  position: absolute;
+  left: 50%; top: 50%;
+  width: 180vmax; height: 180vmax;
+  margin: -90vmax 0 0 -90vmax;
+  background: conic-gradient(
+    from 0deg,
+    var(--color-gold-bright) 0deg,
+    var(--color-gold) 50deg,
+    var(--splash-edge) 120deg,
+    var(--splash-edge) 230deg,
+    var(--color-gold) 300deg,
+    var(--color-gold-bright) 360deg
+  );
+  animation: splash-sweep 1.7s linear 1;
+  will-change: transform;
+}
+@keyframes splash-sweep { to { transform: rotate(1turn); } }
 .splash-skip {
+  position: relative;
+  z-index: 1;
   display: grid; align-content: center; justify-items: center; gap: 16px;
   width: 100%; height: 100%; padding: 32px;
   border: 0; background: transparent; color: inherit; cursor: pointer;
@@ -643,10 +701,16 @@ html[data-splash="off"] .splash { display: none !important; }
   font-family: var(--font-display); font-weight: 800;
   font-size: clamp(40px, 9vw, 84px); letter-spacing: 0.03em; line-height: 0.95;
   text-align: center; text-transform: uppercase;
+  text-shadow: 0 2px 22px color-mix(in oklab, var(--color-field-deep) 88%, black);
   animation: splash-in 0.5s ease-out both;
 }
 .splash-bar { width: 72px; height: 8px; border-radius: 4px; background: var(--color-gold); }
-.splash.is-still .splash-chant { animation: none; }
+.splash.is-still .splash-chant,
+.splash.is-still .splash-lights-beam::before { animation: none; }
+@media (prefers-reduced-motion: reduce) {
+  .splash-lights-beam::before { animation: none; }
+  .splash-lights-glow { opacity: 0.62; }
+}
 @keyframes splash-in {
   from { opacity: 0; transform: translateY(14px) scale(0.96); }
   to { opacity: 1; transform: none; }
