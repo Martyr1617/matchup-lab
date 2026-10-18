@@ -630,20 +630,8 @@ html[data-splash="off"] .splash { display: none !important; }
 }
 .splash[hidden] { display: none !important; }
 .splash.is-out { opacity: 0; transition: opacity 0.35s ease; }
-@property --comet {
-  syntax: "<angle>";
-  inherits: false;
-  initial-value: 0deg;
-}
-@property --comet-back {
-  syntax: "<angle>";
-  inherits: false;
-  initial-value: 180deg;
-}
 .splash-lights {
-  --splash-edge: color-mix(in oklab, var(--color-border) 70%, white);
-  --comet: 0deg;
-  --comet-back: 180deg;
+  --splash-edge: color-mix(in oklab, var(--color-border) 72%, white);
   position: absolute;
   z-index: 0;
   pointer-events: none;
@@ -653,151 +641,52 @@ html[data-splash="off"] .splash { display: none !important; }
     calc(8px + env(safe-area-inset-bottom, 0px))
     calc(8px + env(safe-area-inset-left, 0px));
   border-radius: 42px;
-  background:
-    linear-gradient(to bottom, color-mix(in oklab, var(--color-gold) 18%, transparent), transparent 18%),
-    linear-gradient(to top, color-mix(in oklab, var(--splash-edge) 22%, transparent), transparent 16%),
-    linear-gradient(to right, color-mix(in oklab, var(--splash-edge) 16%, transparent), transparent 12%),
-    linear-gradient(to left, color-mix(in oklab, var(--color-gold) 14%, transparent), transparent 12%);
 }
-.splash-lights-track,
 .splash-lights-glow,
-.splash-lights-ring,
-.splash-lights-flash,
-.splash-lights-corners {
+.splash-lights-ring {
   position: absolute;
   inset: 0;
   border-radius: inherit;
   pointer-events: none;
 }
-.splash-lights-track,
-.splash-lights-beam,
-.splash-lights-flash {
+.splash-lights-glow { filter: blur(18px); opacity: 0.95; }
+.splash-lights-ring { filter: blur(1.4px); }
+.splash-lights-beam {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 9px;
   -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
   -webkit-mask-composite: xor;
   mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
   mask-composite: exclude;
 }
-.splash-lights-track {
-  padding: 5px;
-  background: linear-gradient(135deg, var(--splash-edge), var(--color-gold));
-  opacity: 0.2;
-}
-.splash-lights-glow { filter: blur(14px); opacity: 1; }
-.splash-lights-beam {
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  overflow: hidden;
-  padding: 7px;
-}
-.splash-lights-glow .splash-lights-beam { padding: 16px; }
-.splash-lights-beam::before,
-.splash-lights-beam-back::before {
+.splash-lights-glow .splash-lights-beam { padding: 20px; }
+.splash-lights-beam::before {
   content: "";
   position: absolute;
   left: 50%; top: 50%;
-  width: 180vmax; height: 180vmax;
-  margin: -90vmax 0 0 -90vmax;
-  will-change: transform;
-}
-.splash-lights-beam::before {
+  width: 200vmax; height: 200vmax;
+  margin: -100vmax 0 0 -100vmax;
   background: conic-gradient(
     from 0deg,
     white 0deg,
-    white 8deg,
-    var(--splash-edge) 22deg,
-    color-mix(in oklab, var(--splash-edge) 72%, white) 48deg,
-    color-mix(in oklab, var(--splash-edge) 32%, transparent) 100deg,
-    transparent 160deg,
-    transparent 360deg
+    color-mix(in oklab, white 55%, var(--splash-edge)) 14deg,
+    transparent 36deg,
+    transparent 150deg,
+    color-mix(in oklab, var(--color-gold) 16%, transparent) 200deg,
+    color-mix(in oklab, var(--color-gold) 42%, transparent) 250deg,
+    color-mix(in oklab, var(--splash-edge) 75%, transparent) 300deg,
+    var(--splash-edge) 332deg,
+    white 352deg,
+    white 360deg
   );
-  animation: splash-spin 2.25s linear forwards;
-}
-.splash-lights-beam-back::before {
-  background: conic-gradient(
-    from 180deg,
-    var(--color-gold-bright) 0deg,
-    var(--color-gold) 12deg,
-    color-mix(in oklab, var(--color-gold) 45%, transparent) 40deg,
-    transparent 78deg,
-    transparent 360deg
-  );
-  animation: splash-spin-back 2.25s linear forwards;
-}
-.splash.splash-angle .splash-lights-beam::before {
-  background: conic-gradient(
-    from var(--comet),
-    white 0deg,
-    white 8deg,
-    var(--splash-edge) 22deg,
-    color-mix(in oklab, var(--splash-edge) 72%, white) 48deg,
-    color-mix(in oklab, var(--splash-edge) 32%, transparent) 100deg,
-    transparent 160deg,
-    transparent 360deg
-  );
-  animation: splash-angle 2.25s linear forwards;
-  transform: none;
-}
-.splash.splash-angle .splash-lights-beam-back::before {
-  background: conic-gradient(
-    from var(--comet-back),
-    var(--color-gold-bright) 0deg,
-    var(--color-gold) 12deg,
-    color-mix(in oklab, var(--color-gold) 45%, transparent) 40deg,
-    transparent 78deg,
-    transparent 360deg
-  );
-  animation: splash-angle-back 2.25s linear forwards;
-  transform: none;
+  animation: splash-spin 2s linear forwards;
+  will-change: transform;
 }
 @keyframes splash-spin {
-  0% { transform: rotate(0deg); }
-  20% { transform: rotate(120deg); }
-  62% { transform: rotate(680deg); }
-  100% { transform: rotate(900deg); }
-}
-@keyframes splash-spin-back {
-  0% { transform: rotate(0deg); }
-  20% { transform: rotate(-90deg); }
-  62% { transform: rotate(-460deg); }
-  100% { transform: rotate(-720deg); }
-}
-@keyframes splash-angle {
-  0% { --comet: 0deg; }
-  20% { --comet: 120deg; }
-  62% { --comet: 680deg; }
-  100% { --comet: 900deg; }
-}
-@keyframes splash-angle-back {
-  0% { --comet-back: 180deg; }
-  20% { --comet-back: 90deg; }
-  62% { --comet-back: -280deg; }
-  100% { --comet-back: -540deg; }
-}
-.splash-lights-corners {
-  background:
-    radial-gradient(36px 36px at 0 0, color-mix(in oklab, var(--color-gold-bright) 85%, white), transparent 72%),
-    radial-gradient(36px 36px at 100% 0, color-mix(in oklab, var(--splash-edge) 80%, white), transparent 72%),
-    radial-gradient(36px 36px at 100% 100%, color-mix(in oklab, var(--color-gold) 80%, white), transparent 72%),
-    radial-gradient(36px 36px at 0 100%, color-mix(in oklab, var(--splash-edge) 75%, white), transparent 72%);
-  opacity: 0.16;
-  animation: splash-corners 2s linear forwards;
-}
-@keyframes splash-corners {
-  0%, 18%, 50%, 100% { opacity: 0.16; }
-  30% { opacity: 1; }
-}
-.splash-lights-flash {
-  padding: 8px;
-  background: linear-gradient(var(--color-gold-bright), var(--splash-edge));
-  opacity: 0;
-  animation: splash-flash 2s linear forwards;
-}
-@keyframes splash-flash {
-  0%, 18% { opacity: 0; }
-  30% { opacity: 1; }
-  44% { opacity: 0; }
-  100% { opacity: 0; }
+  from { transform: rotate(0deg); }
+  to { transform: rotate(720deg); }
 }
 .splash-skip {
   position: relative;
@@ -820,15 +709,9 @@ html[data-splash="off"] .splash { display: none !important; }
 .splash-bar { width: 72px; height: 8px; border-radius: 4px; background: var(--color-gold); }
 .splash.is-still .splash-chant,
 .splash.is-still .splash-lights-beam::before { animation: none; }
-.splash.is-still .splash-lights-flash { animation: none; opacity: 0.4; }
-.splash.is-still .splash-lights-corners { animation: none; opacity: 0.55; }
 @media (prefers-reduced-motion: reduce) {
-  .splash-lights-beam::before,
-  .splash-lights-flash,
-  .splash-lights-corners { animation: none; }
-  .splash-lights-glow { opacity: 0.7; }
-  .splash-lights-flash { opacity: 0.4; }
-  .splash-lights-corners { opacity: 0.55; }
+  .splash-lights-beam::before { animation: none; }
+  .splash-lights-glow { opacity: 0.72; }
 }
 @keyframes splash-in {
   from { opacity: 0; transform: translateY(14px) scale(0.96); }
