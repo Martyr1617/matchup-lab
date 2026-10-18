@@ -1,7 +1,7 @@
 /* App shell is stamped so a deploy swaps in a new cache. Projection files stay
    network-first in their own cache, so an update does not discard the last good
    data.json, market.json, or news.json when the network is down. */
-const VER = 'd2525f2f11';
+const VER = 'ccdf3b58c6';
 const SHELL_CACHE = 'ml-shell-' + VER;
 const DATA_CACHE = 'ml-data';
 const VERSIONED = ['styles.css', 'themes.css', 'app.js', 'model.js', 'lineup.js', 'waiver.js', 'team.js', 'glossary.js', 'trade.js', 'chants.js', 'chart.umd.min.js'];
