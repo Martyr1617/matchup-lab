@@ -145,6 +145,18 @@ test('my team has no copy-link control and still saves and lines up', () => {
   assert.match(team, /id="teamSel"/);
 });
 
+test('defense headers stick below the app chrome and the team column sticks left', () => {
+  const css = read('styles.css');
+  const block = css.slice(css.indexOf('Defense table'), css.indexOf('Method'));
+  assert.match(block, /\.main:has\(#view-defense:not\(\[hidden\]\)\)/);
+  assert.match(block, /overflow:\s*hidden/);
+  assert.match(block, /#view-defense \.table-wrap[\s\S]*overflow:\s*auto/);
+  assert.match(block, /\.deftable thead th \{[^}]*position:\s*sticky;[^}]*top:\s*0;[^}]*background-color:\s*var\(--color-surface-2\)/);
+  assert.match(block, /\.deftable tbody td:first-child \{[^}]*position:\s*sticky;[^}]*left:\s*0;[^}]*background-color:\s*var\(--color-surface\)/);
+  assert.match(block, /\.deftable thead th:first-child \{[^}]*z-index:\s*3;[^}]*background-color:\s*var\(--color-surface-2\)/);
+  assert.doesNotMatch(block, /background(?:-color)?:\s*(?:transparent|#0b3d24|#f5c518)/i);
+});
+
 test('the page registers the worker and declares an iOS icon', () => {
   const html = read('index.html');
   assert.match(html, /viewport-fit=cover/);
