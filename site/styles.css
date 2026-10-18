@@ -317,11 +317,65 @@ tbody tr:last-child td { border-bottom: 0; }
 .bye { padding: var(--space-10); text-align: center; color: var(--color-text-muted); }
 
 /* ---------- Defense table ---------- */
+/* The card is the scrollport, below the app header and the section title.
+   Column labels stick to its top; the team name sticks to its left. */
+.main:has(#view-defense:not([hidden])) {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+#view-defense:not([hidden]) {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 1320px;
+  margin: 0 auto;
+  padding: var(--space-6);
+  box-sizing: border-box;
+}
+#view-defense .view-head { flex: none; }
+#view-defense .table-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.deftable { border-collapse: separate; border-spacing: 0; }
 .deftable th { cursor: pointer; user-select: none; }
 .deftable th.sorted { color: var(--color-text); }
 .deftable td { white-space: nowrap; }
 .deftable .tm { font-weight: 700; }
 .deftable .cellrk { display: inline-flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
+.deftable thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background-color: var(--color-surface-2);
+  box-shadow: inset 0 -1px 0 var(--color-border);
+}
+.deftable tbody td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background-color: var(--color-surface);
+  box-shadow: inset -1px 0 0 var(--color-border);
+}
+.deftable thead th:first-child {
+  left: 0;
+  z-index: 3;
+  background-color: var(--color-surface-2);
+  box-shadow: inset -1px 0 0 var(--color-border), inset 0 -1px 0 var(--color-border);
+}
+@media (max-width: 1000px) {
+  #view-defense:not([hidden]) { padding: var(--space-4); }
+}
+@media (max-width: 600px) {
+  #view-defense:not([hidden]) { padding: var(--space-3); }
+}
 
 /* ---------- Method ---------- */
 .method-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--space-5); }
