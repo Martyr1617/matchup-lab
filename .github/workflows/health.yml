@@ -7,12 +7,6 @@ on:
     # 13:55 UTC is 6:55 AM Pacific Daylight Time, and 5:55 AM Pacific Standard
     # Time after the first Sunday in November. GitHub schedules are UTC only.
     - cron: '55 13 * * *'
-  # A commit that touches .github/health-simulate also runs the check, so a
-  # simulated failure can be exercised when workflow_dispatch is unavailable.
-  push:
-    branches: [main]
-    paths:
-      - '.github/health-simulate'
   workflow_dispatch:
     inputs:
       simulate:
