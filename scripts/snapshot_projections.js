@@ -10,6 +10,8 @@ const fs = require('fs');
 const { project } = require('../site/model');
 
 const POS = ['QB', 'RB', 'WR', 'TE'];
+const LINE_KEYS = ['pass_yds', 'pass_att', 'pass_cmp', 'pass_td', 'int', 'rush_yds', 'rush_att', 'rec_yds', 'rec'];
+const MODEL_KEYS = ['pa', 'py', 'ptd', 'int', 'ca', 'ry', 'rtd', 'rc', 'rcy', 'rctd'];
 
 function nthSunday(year, monthIndex, n) {
   const first = new Date(Date.UTC(year, monthIndex, 1)).getUTCDay();
@@ -46,6 +48,105 @@ function round(n, places) {
   if (!Number.isFinite(x)) return null;
   const p = 10 ** places;
   return Math.round(x * p) / p;
+}
+
+function modelOf(comps) {
+  if (!comps) return null;
+  const out = {};
+  for (const key of MODEL_KEYS) {
+    const n = round(comps[key], 2);
+    if (n != null) out[key] = n;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+function propCell(raw) {
+  if (!raw || raw.line == null) return null;
+  const line = round(raw.line, 2);
+  if (line == null) return null;
+  const cell = { line };
+  if (raw.over != null && Number.isFinite(Number(raw.over))) cell.over = Math.round(Number(raw.over));
+  if (raw.under != null && Number.isFinite(Number(raw.under))) cell.under = Math.round(Number(raw.under));
+  if (raw.p_over != null && Number.isFinite(Number(raw.p_over))) cell.p_over = round(raw.p_over, 4);
+  if (raw.src) cell.src = String(raw.src);
+  return cell;
+}
+
+function oddsPair(a, b) {
+  if (a == null && b == null) return null;
+  const num = (v) => (v == null || !Number.isFinite(Number(v)) ? null : Math.round(Number(v)));
+  return [num(a), num(b)];
+}
+
+function buildProps(market, games, modeled, meta) {
+  const byKey = {};
+  for (const g of games) byKey[`${g.away}@${g.home}`] = g;
+  const byEspn = {};
+  for (const row of modeled) if (row.espn) byEspn[String(row.espn)] = row;
+  const gameRows = games.map((g) => {
+    const mk = (market.games || {})[`${g.away}@${g.home}`] || {};
+    const row = {
+      id: g.id, away: g.away, home: g.home, kickoff: g.kickoff,
+      spread_home: g.spread_home, total: g.total,
+    };
+    const spreadOdds = oddsPair(mk.spread_odds_home, mk.spread_odds_away);
+    const totalOdds = oddsPair(mk.total_over_odds, mk.total_under_odds);
+    const ml = oddsPair(mk.ml_home, mk.ml_away);
+    if (spreadOdds) row.spread_odds = spreadOdds;
+    if (totalOdds) row.total_odds = totalOdds;
+    if (ml) row.ml = ml;
+    return row;
+  });
+  const players = [];
+  for (const [espn, rec] of Object.entries(market.props || {})) {
+    if (!rec || typeof rec !== 'object') continue;
+    const game = byKey[rec.game];
+    if (!game) continue;
+    const known = byEspn[String(rec.espn || espn)];
+    const player = {
+      espn: String(rec.espn || espn),
+      name: (known && known.name) || rec.name || null,
+      game: game.id,
+    };
+    if (known) {
+      player.id = known.id;
+      player.pos = known.pos;
+      player.team = known.team;
+      if (known.model) player.model = known.model;
+    }
+    let any = false;
+    for (const key of LINE_KEYS) {
+      const cell = propCell(rec[key]);
+      if (!cell) continue;
+      player[key] = cell;
+      any = true;
+    }
+    if (rec.atd && rec.atd.p != null && Number.isFinite(Number(rec.atd.p))) {
+      const atd = { p: round(rec.atd.p, 4) };
+      if (rec.atd.odds != null && Number.isFinite(Number(rec.atd.odds))) atd.odds = Math.round(Number(rec.atd.odds));
+      if (rec.atd.src) atd.src = String(rec.atd.src);
+      player.atd = atd;
+      any = true;
+    }
+    if (!any) continue;
+    players.push(player);
+  }
+  players.sort((a, b) => String(a.game).localeCompare(String(b.game)) || String(a.name || '').localeCompare(String(b.name || '')) || String(a.espn).localeCompare(String(b.espn)));
+  const doc = {
+    v: 1,
+    kind: 'props',
+    season: meta.season,
+    week: meta.week,
+    generated: meta.generated,
+    stamp: meta.stamp,
+    as_of: market.as_of || null,
+    source: market.source || 'ESPN (DraftKings)',
+    games: gameRows,
+    players,
+  };
+  if (market.stale) doc.stale = true;
+  if (modeled.some((row) => row.model)) doc.model_generated = meta.generated;
+  return doc;
 }
 
 function tradeValue(pl) {
@@ -88,6 +189,7 @@ function buildSnapshot(data, market) {
   games.forEach((g) => { byTeam[g.home] = g; byTeam[g.away] = g; });
   const env = { data, market: marketWeek, wx: {} };
   const players = [];
+  const modeled = [];
   for (const pl of data.players || []) {
     if (!POS.includes(pl.pos)) continue;
     const g = byTeam[pl.team];
@@ -107,6 +209,7 @@ function buildSnapshot(data, market) {
       ceil: round(pr.ceil, 2),
     };
     if (pl.ids && pl.ids.espn) row.espn = String(pl.ids.espn);
+    if (row.espn) modeled.push({ espn: row.espn, id: row.id, name: row.name, pos: row.pos, team: row.team, game: row.game, model: modelOf(pr.modelC) });
     if (pr.roleFloor) row.role = true;
     const tv = tradeValue(pl);
     if (tv) row.tv = tv;
@@ -128,6 +231,7 @@ function buildSnapshot(data, market) {
   if (marketWeek && marketWeek.as_of) snap.market_as_of = marketWeek.as_of;
   if (marketWeek && marketWeek.stale) snap.market_stale = true;
   snap.stamp = stampOf(snap.generated);
+  if (marketWeek) snap.props = buildProps(marketWeek, games, modeled, snap);
   return snap;
 }
 
@@ -154,7 +258,7 @@ function main(argv) {
   process.stdout.write(`snapshot ${snap.stamp} week ${snap.week} players ${snap.players.length} games ${snap.games.length}\n`);
 }
 
-module.exports = { buildSnapshot, kickoffUTC, generatedIso, stampOf };
+module.exports = { buildSnapshot, buildProps, kickoffUTC, generatedIso, stampOf };
 
 if (require.main === module) {
   try { main(process.argv.slice(2)); }

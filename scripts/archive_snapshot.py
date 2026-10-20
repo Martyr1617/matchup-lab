@@ -5,14 +5,17 @@ The data branch is force-pushed every hour, so this tree is a different
 branch and is only ever fast-forwarded. Layout:
 
     snapshots/2026/wk06/2026-10-15T16-35Z.json
+    snapshots/2026/wk06/props/2026-10-15T16-35Z.json
     snapshots/2026/wk06/prekickoff/2026_06_SEA_DEN.json
+    snapshots/2026/wk06/prekickoff/props/2026_06_SEA_DEN.json
     snapshots/2026/wk06/manifest.json
 
-Hourly files are pruned to the latest KEEP_HOURLY. The pre-kickoff file for a
-game is a copy of the last hourly snapshot published strictly before that
-game's kickoff, written on the first archive whose own timestamp is at or
-after kickoff. Thursday, Sunday early, Sunday late, Sunday night, and Monday
-each freeze on their own kickoff.
+Hourly projection files and hourly prop files are each pruned to the latest
+KEEP_HOURLY. The pre-kickoff projection, and the prop file beside it, are the
+last hourly record published strictly before that game's kickoff. They are
+written on the first archive whose own timestamp is at or after kickoff.
+Thursday, Sunday early, Sunday late, Sunday night, and Monday each freeze on
+their own kickoff. A frozen prop file is never replaced.
 
     python scripts/archive_snapshot.py snap.json --root /tmp/archive
     python scripts/archive_snapshot.py snap.json --push
@@ -64,6 +67,167 @@ def hourly_paths(directory: Path):
     return sorted(p for p in directory.glob("*.json") if p.name != "manifest.json")
 
 
+def _projection_body(snapshot):
+    return {k: v for k, v in snapshot.items() if k != "props"}
+
+
+def _load_hourly(directory: Path):
+    docs = []
+    for path in hourly_paths(directory):
+        doc = _load(path)
+        doc["_path"] = path
+        docs.append(doc)
+    docs.sort(key=lambda doc: parse_time(doc["generated"]))
+    return docs
+
+
+def _prune(docs, keep):
+    if keep < 0:
+        keep = 0
+    keep_paths = {doc["_path"].resolve() for doc in docs[-keep:]} if keep else set()
+    removed = []
+    for doc in docs:
+        if doc["_path"].resolve() in keep_paths:
+            continue
+        doc["_path"].unlink()
+        removed.append(doc.get("stamp"))
+    kept = [doc.get("stamp") for doc in docs if doc["_path"].resolve() in keep_paths]
+    return kept, removed
+
+
+def _props_slice(doc, gid, frozen_at):
+    game = next(g for g in doc.get("games") or [] if g.get("id") == gid)
+    players = [p for p in doc.get("players") or [] if p.get("game") == gid]
+    body = {
+        "v": 1,
+        "kind": "prekickoff-props",
+        "season": doc["season"],
+        "week": doc["week"],
+        "game_id": gid,
+        "source_snapshot": doc.get("stamp"),
+        "generated": doc.get("generated"),
+        "as_of": doc.get("as_of"),
+        "source": doc.get("source"),
+        "kickoff": game.get("kickoff"),
+        "game": game,
+        "players": players,
+    }
+    if doc.get("model_generated"):
+        body["model_generated"] = doc["model_generated"]
+    if doc.get("stale"):
+        body["stale"] = True
+    if doc.get("note"):
+        body["note"] = doc["note"]
+    if doc.get("recovered"):
+        body["recovered"] = True
+    body["frozen_at"] = frozen_at
+    return body
+
+
+def _freeze_props(directory: Path, now, frozen_at):
+    docs = _load_hourly(directory / "props")
+    pre_dir = directory / "prekickoff" / "props"
+    frozen = []
+    seen = {}
+    for doc in docs:
+        for game in doc.get("games") or []:
+            gid = game.get("id")
+            if gid and gid not in seen:
+                seen[gid] = game
+    for gid, game in seen.items():
+        pre_path = pre_dir / f"{gid}.json"
+        if pre_path.exists():
+            continue
+        kick = game.get("kickoff")
+        if not kick or parse_time(kick) > now:
+            continue
+        earlier = [
+            doc for doc in docs
+            if parse_time(doc["generated"]) < parse_time(kick)
+            and any(g.get("id") == gid for g in doc.get("games") or [])
+        ]
+        if not earlier:
+            continue
+        _dump(pre_path, _props_slice(earlier[-1], gid, frozen_at))
+        frozen.append(gid)
+    return frozen
+
+
+def refresh_manifest(directory: Path, season, week, keep=None):
+    directory = Path(directory)
+    man_path = directory / "manifest.json"
+    existing = _load(man_path) if man_path.exists() else {}
+    if keep is None:
+        keep = existing.get("keep_hourly", KEEP_HOURLY)
+    manifest = {
+        "v": 1,
+        "season": season,
+        "week": week,
+        "keep_hourly": keep,
+        "hourly": [doc.get("stamp") for doc in _load_hourly(directory)],
+        "props": [doc.get("stamp") for doc in _load_hourly(directory / "props")],
+        "prekickoff": {},
+        "prekickoff_props": {},
+    }
+    pre_dir = directory / "prekickoff"
+    if pre_dir.is_dir():
+        for path in sorted(pre_dir.glob("*.json")):
+            doc = _load(path)
+            gid = doc.get("game_id")
+            if not gid:
+                continue
+            manifest["prekickoff"][gid] = {
+                "snapshot": doc.get("source_snapshot"),
+                "kickoff": doc.get("kickoff"),
+                "generated": doc.get("generated"),
+                "frozen_at": doc.get("frozen_at"),
+            }
+    props_pre = pre_dir / "props"
+    if props_pre.is_dir():
+        for path in sorted(props_pre.glob("*.json")):
+            doc = _load(path)
+            gid = doc.get("game_id")
+            if not gid:
+                continue
+            manifest["prekickoff_props"][gid] = {
+                "snapshot": doc.get("source_snapshot"),
+                "kickoff": doc.get("kickoff"),
+                "generated": doc.get("generated"),
+                "frozen_at": doc.get("frozen_at"),
+                "as_of": doc.get("as_of"),
+                "players": len(doc.get("players") or []),
+                "recovered": bool(doc.get("recovered")),
+            }
+    _dump(man_path, manifest)
+    return manifest
+
+
+def write_frozen_props(root, body):
+    for key in ("season", "week", "game_id", "game", "players"):
+        if key not in body:
+            raise ValueError(f"frozen props missing {key}")
+    directory = week_dir(root, body["season"], body["week"])
+    path = directory / "prekickoff" / "props" / f"{body['game_id']}.json"
+    if path.exists():
+        return {"wrote": None, "path": str(path)}
+    _dump(path, body)
+    refresh_manifest(directory, body["season"], body["week"])
+    return {"wrote": body["game_id"], "path": str(path)}
+
+
+def write_hourly_props(root, doc, keep=KEEP_HOURLY):
+    for key in ("season", "week", "generated", "stamp", "games", "players"):
+        if key not in doc:
+            raise ValueError(f"props snapshot missing {key}")
+    directory = week_dir(root, doc["season"], doc["week"])
+    directory.mkdir(parents=True, exist_ok=True)
+    _dump(directory / "props" / f"{doc['stamp']}.json", doc)
+    frozen = _freeze_props(directory, parse_time(doc["generated"]), doc["generated"])
+    kept, removed = _prune(_load_hourly(directory / "props"), keep)
+    refresh_manifest(directory, doc["season"], doc["week"], keep=keep)
+    return {"wrote": doc["stamp"], "frozen": frozen, "removed": removed, "hourly": kept}
+
+
 def _game_slice(snapshot, game):
     gid = game["id"]
     players = [p for p in snapshot.get("players") or [] if p.get("game") == gid]
@@ -97,17 +261,12 @@ def archive(root, snapshot, keep=KEEP_HOURLY):
     directory = week_dir(root, snapshot["season"], snapshot["week"])
     directory.mkdir(parents=True, exist_ok=True)
     dest = directory / f"{snapshot['stamp']}.json"
-    _dump(dest, snapshot)
+    _dump(dest, _projection_body(snapshot))
+    if snapshot.get("props"):
+        _dump(directory / "props" / f"{snapshot['stamp']}.json", snapshot["props"])
     now = parse_time(snapshot["generated"])
 
-    snaps = []
-    for path in hourly_paths(directory):
-        doc = _load(path)
-        doc["_path"] = path
-        snaps.append(doc)
-    snaps.sort(key=lambda doc: parse_time(doc["generated"]))
-
-    pre_dir = directory / "prekickoff"
+    snaps = _load_hourly(directory)
     frozen = []
     seen = {}
     for doc in snaps:
@@ -116,7 +275,7 @@ def archive(root, snapshot, keep=KEEP_HOURLY):
             if gid and gid not in seen:
                 seen[gid] = game
     for gid, game in seen.items():
-        pre_path = pre_dir / f"{gid}.json"
+        pre_path = directory / "prekickoff" / f"{gid}.json"
         if pre_path.exists():
             continue
         kick = game.get("kickoff")
@@ -132,34 +291,19 @@ def archive(root, snapshot, keep=KEEP_HOURLY):
         _dump(pre_path, body)
         frozen.append(gid)
 
-    keep_paths = {doc["_path"].resolve() for doc in snaps[-keep:]}
-    removed = []
-    for doc in snaps:
-        if doc["_path"].resolve() in keep_paths:
-            continue
-        doc["_path"].unlink()
-        removed.append(doc["stamp"])
-
-    kept = [doc["stamp"] for doc in snaps if doc["_path"].resolve() in keep_paths]
-    manifest = {
-        "v": 1,
-        "season": snapshot["season"],
-        "week": snapshot["week"],
-        "keep_hourly": keep,
+    kept, removed = _prune(snaps, keep)
+    frozen_props = _freeze_props(directory, now, snapshot["generated"])
+    _prop_kept, prop_removed = _prune(_load_hourly(directory / "props"), keep)
+    refresh_manifest(directory, snapshot["season"], snapshot["week"], keep=keep)
+    return {
+        "wrote": snapshot["stamp"],
+        "frozen": frozen,
+        "frozen_props": frozen_props,
+        "removed": removed,
+        "removed_props": prop_removed,
         "hourly": kept,
-        "prekickoff": {},
+        "props": _prop_kept,
     }
-    if pre_dir.is_dir():
-        for path in sorted(pre_dir.glob("*.json")):
-            doc = _load(path)
-            manifest["prekickoff"][doc["game_id"]] = {
-                "snapshot": doc.get("source_snapshot"),
-                "kickoff": doc.get("kickoff"),
-                "generated": doc.get("generated"),
-                "frozen_at": doc.get("frozen_at"),
-            }
-    _dump(directory / "manifest.json", manifest)
-    return {"wrote": snapshot["stamp"], "frozen": frozen, "removed": removed, "hourly": kept}
 
 
 def _run(args, cwd, check=True):
@@ -217,7 +361,11 @@ def push_snapshot(snapshot_path: Path):
         # HEAD:snapshots fast-forwards. There is no --force.
         _run(["git", "push", url, "HEAD:snapshots"], cwd=tmp)
     frozen = ", ".join(summary["frozen"]) or "none"
-    print(f"archived {summary['wrote']} hourly={len(summary['hourly'])} froze={frozen}")
+    froze_props = ", ".join(summary.get("frozen_props") or []) or "none"
+    print(
+        f"archived {summary['wrote']} hourly={len(summary['hourly'])} "
+        f"props={len(summary.get('props') or [])} froze={frozen} froze_props={froze_props}"
+    )
     return summary
 
 

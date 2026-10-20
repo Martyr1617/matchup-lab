@@ -9,7 +9,7 @@ A scheduled GitHub Actions workflow runs every hour. Each run:
 1. Downloads public nflverse / ffverse data: player and team stats, play-by-play, snap counts, Next Gen Stats, PFR advanced stats, expected fantasy points, injuries and the schedule.
 2. Pulls DraftKings spreads, totals and player-prop lines from ESPN's public feed.
 3. Pushes `data.json` and `market.json` to the `data` branch, which the app reads. That branch is force-pushed, so it only keeps the latest file.
-4. Fast-forwards a separate `snapshots` branch (never force-pushed) with a compact projection file, `snapshots/2026/wk06/<timestamp>.json`. Each file has every player's PPR projection, floor, ceiling, and trade value, plus the game total and spread. The latest six hourly files are kept. The first refresh at or after a game's kickoff freezes the last snapshot from before that kickoff under `snapshots/2026/wk06/prekickoff/<game_id>.json`, so Thursday, Sunday early, Sunday late, Sunday night, and Monday each keep their own.
+4. Fast-forwards a separate `snapshots` branch (never force-pushed) with a compact projection file, `snapshots/2026/wk06/<timestamp>.json`. Each file has every player's PPR projection, floor, ceiling, and trade value, plus the game total and spread. The latest six hourly files are kept. The first refresh at or after a game's kickoff freezes the last snapshot from before that kickoff under `snapshots/2026/wk06/prekickoff/<game_id>.json`, so Thursday, Sunday early, Sunday late, Sunday night, and Monday each keep their own. The same run writes the prop board to `snapshots/2026/wk06/props/<timestamp>.json` (pass, rush, and receiving yards, receptions, pass attempts, and the other counted props ESPN posts, plus anytime TD only when a price is attached). Over/under prices are stored when the feed sends them. Each game row on that file has the spread, the total, and the moneyline, spread, and total prices when ESPN sends them. The first refresh at or after kickoff freezes that game's last pre-kickoff prop file at `snapshots/2026/wk06/prekickoff/props/<game_id>.json`. A frozen file is never replaced. The live projection still blends a posted prop component at 50 percent.
 
 To score a week once games are final:
 
@@ -18,6 +18,14 @@ python scripts/score_week.py --week 6
 ```
 
 That reads the pre-kickoff files, pulls actual PPR from nflverse when the week is in the file and from ESPN box scores otherwise, and prints mean absolute error, bias, floor-ceiling coverage, Spearman correlation, and the biggest hits and misses. Add `--season 2026` if you are not scoring the newest season stored on the branch.
+
+To score prop-blend weights once games are final and a pre-kickoff prop file exists:
+
+```
+python scripts/prop_backtest.py --week 7
+```
+
+Weights are 0, 10, 20, 30, 40, 50, and 60 percent of the prop mean, per stat and position. It prints MAE, bias, Spearman, and how the posted line sat against the actual. Weight 50 percent is what the live app does. Pass `--root` to read a local archive instead of `origin/snapshots`. About 6 to 8 frozen weeks is enough to tell a weight from the week-to-week swing. About 18 weeks is the point at which a small gap is worth changing that 50 percent blend.
 
 The Pages site keeps loading those files from `https://raw.githubusercontent.com/Martyr1617/matchup-lab/data/`. The copies committed under `site/` are the fallback when that branch cannot be reached. The hourly refresh does not deploy the page.
 

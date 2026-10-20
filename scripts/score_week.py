@@ -265,6 +265,8 @@ def actuals_from_nflverse_rows(rows, week):
             "two_rec": _num(row.get("receiving_2pt_conversions")),
             "st_td": _num(row.get("special_teams_tds")),
         }
+        if row.get("completions") not in (None, ""):
+            stats["pass_cmp"] = _num(row.get("completions"))
         points = row.get("fantasy_points_ppr")
         actual = _num(points) if points not in (None, "") else ppr_from_line(stats)
         if stats["st_td"] and points in (None, ""):

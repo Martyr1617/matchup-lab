@@ -82,6 +82,8 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           # data was replaced above. This step only fast-forwards the snapshots branch.
+          # archive_snapshot.py also writes snapshots/<season>/wkNN/props/<stamp>.json
+          # and freezes prekickoff/props/<game_id>.json on the same kickoff rule.
           args=(scripts/snapshot_projections.js --data site/data.json --out /tmp/projection-snapshot.json)
           if [ -s site/market.json ]; then args+=(--market site/market.json); fi
           node "${args[@]}"
