@@ -663,6 +663,9 @@ def main(argv=None):
     parser.add_argument('--simulate', default='', help='Pass "failure" to exercise the alert.')
     args = parser.parse_args(argv)
     simulate = args.simulate or os.environ.get('HEALTH_SIMULATE') or ''
+    sim_path = ROOT / '.github' / 'health-simulate'
+    if not simulate.strip() and sim_path.is_file():
+        simulate = sim_path.read_text().strip()
     now = datetime.now(timezone.utc)
     repo = _repo()
     problems = collect_live(repo, now)
