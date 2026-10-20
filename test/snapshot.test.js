@@ -47,7 +47,23 @@ test('snapshot stores projection, floor, ceiling, trade value, and the game line
       adv: {},
     }],
   };
-  const market = { week: 6, as_of: '2026-10-15T16:35:20Z', games: { 'SEA@DEN': { spread_home: 2.5, total: 40.5 } }, props: {} };
+  const market = {
+    week: 6, as_of: '2026-10-15T16:35:20Z',
+    games: {
+      'SEA@DEN': {
+        spread_home: 2.5, total: 40.5,
+        spread_odds_home: -110, spread_odds_away: -110,
+        total_over_odds: -105, total_under_odds: -115,
+        ml_home: -130, ml_away: 110,
+      },
+    },
+    props: {
+      '3912547': {
+        name: 'Sam Darnold', espn: '3912547', game: 'SEA@DEN',
+        pass_yds: { line: 221.5, over: -115, under: -105, p_over: 0.5238 },
+      },
+    },
+  };
   const snap = buildSnapshot(data, market);
   assert.equal(snap.stamp, '2026-10-15T16-35Z');
   assert.equal(snap.week, 6);
@@ -63,4 +79,19 @@ test('snapshot stores projection, floor, ceiling, trade value, and the game line
   assert.equal(snap.games[0].kickoff, '2026-10-16T00:15:00Z');
   assert.equal(snap.games[0].total, 40.5);
   assert.equal(snap.games[0].spread_home, 2.5);
+  assert.equal(qb.model, undefined);
+  assert.equal(snap.props.kind, 'props');
+  assert.equal(snap.props.model_generated, snap.generated);
+  assert.equal(snap.props.players.length, 1);
+  const prop = snap.props.players[0];
+  assert.equal(prop.game, '2026_06_SEA_DEN');
+  assert.equal(prop.pass_yds.line, 221.5);
+  assert.equal(prop.pass_yds.over, -115);
+  assert.equal(prop.pass_yds.p_over, 0.5238);
+  assert.equal(prop.pass_yds.lines, undefined);
+  assert.equal(typeof prop.model.py, 'number');
+  assert.ok(prop.model.py > 0);
+  assert.deepEqual(snap.props.games[0].spread_odds, [-110, -110]);
+  assert.deepEqual(snap.props.games[0].total_odds, [-105, -115]);
+  assert.deepEqual(snap.props.games[0].ml, [-130, 110]);
 });

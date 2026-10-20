@@ -1,6 +1,8 @@
 """Free Vegas lines + player prop lines from ESPN's public odds feeds (DraftKings).
 Writes site/market.json in the same shape the app expects. No API key needed.
-Spreads/totals: site.api.espn.com scoreboard. Props: sports.core.api.espn.com propBets (lines only, no prices).
+Spreads/totals: site.api.espn.com scoreboard, including American prices on the
+moneyline, spread, and total when ESPN sends them. Props: sports.core.api.espn.com
+propBets. That feed publishes the line. Over/under prices are stored when an item carries them.
 """
 import json, re, sys, time, urllib.request
 from datetime import datetime, timezone
@@ -12,7 +14,12 @@ TYPES = {
     'Total Rushing Yards (incl. overtime)': 'rush_yds',
     'Total Passing Yards (incl. overtime)': 'pass_yds',
     'Total Passing Attempts (incl. overtime)': 'pass_att',
+    'Total Pass Completions (incl. overtime)': 'pass_cmp',
+    'Total Passing Touchdowns (incl. overtime)': 'pass_td',
+    'Total Passing Interceptions (incl. overtime)': 'int',
+    'Total Carries (incl. overtime)': 'rush_att',
 }
+ATD_TYPE = 'Anytime Touchdown Scorer'
 
 
 def get(url, tries=3):
@@ -29,6 +36,107 @@ def get(url, tries=3):
 def median(a):
     a = sorted(a); n = len(a)
     return None if not n else (a[n // 2] if n % 2 else (a[n // 2 - 1] + a[n // 2]) / 2)
+
+
+def american(value):
+    """American odds as an int. '+100' and '-110' both parse. Anything else is ignored."""
+    if value is None or value is False:
+        return None
+    text = str(value).strip().replace('+', '')
+    if not text:
+        return None
+    try:
+        return int(round(float(text)))
+    except (TypeError, ValueError):
+        return None
+
+
+def implied_prob(odds):
+    if odds is None:
+        return None
+    o = float(odds)
+    if o == 0:
+        return None
+    if o < 0:
+        return (-o) / ((-o) + 100.0)
+    return 100.0 / (o + 100.0)
+
+
+def no_vig_over(over, under):
+    po, pu = implied_prob(over), implied_prob(under)
+    if po is None or pu is None or (po + pu) <= 0:
+        return None
+    return po / (po + pu)
+
+
+def close_odds(side):
+    if not isinstance(side, dict):
+        return None
+    close = side.get('close') if isinstance(side.get('close'), dict) else None
+    return american((close or side).get('odds'))
+
+
+def attach_game_prices(game, odds):
+    """Copy DraftKings American prices onto a game row. Missing prices stay off the row."""
+    if not isinstance(odds, dict):
+        return game
+    ml, ps, tot = odds.get('moneyline') or {}, odds.get('pointSpread') or {}, odds.get('total') or {}
+    pairs = {
+        'ml_home': close_odds(ml.get('home')),
+        'ml_away': close_odds(ml.get('away')),
+        'spread_odds_home': close_odds(ps.get('home')),
+        'spread_odds_away': close_odds(ps.get('away')),
+        'total_over_odds': close_odds(tot.get('over')),
+        'total_under_odds': close_odds(tot.get('under')),
+    }
+    for key, value in pairs.items():
+        if value is not None:
+            game[key] = value
+    return game
+
+
+def quote_prices(current):
+    if not isinstance(current, dict):
+        return None, None, None
+    over = american((current.get('over') or {}).get('odds')) if isinstance(current.get('over'), dict) else None
+    under = american((current.get('under') or {}).get('odds')) if isinstance(current.get('under'), dict) else None
+    p_over = no_vig_over(over, under)
+    return over, under, (round(p_over, 4) if p_over is not None else None)
+
+
+def atd_quote(current):
+    """Anytime-TD price. The propBets feed usually leaves this object empty."""
+    if not isinstance(current, dict) or not current:
+        return None
+    odds = american(current.get('odds'))
+    target = current.get('target') if isinstance(current.get('target'), dict) else {}
+    if odds is None:
+        odds = american(target.get('odds'))
+    yes = current.get('yes') if isinstance(current.get('yes'), dict) else {}
+    if odds is None:
+        odds = american(yes.get('odds'))
+    if odds is None:
+        return None
+    p = implied_prob(odds)
+    if p is None or not (0 < p < 0.95):
+        return None
+    return {'p': round(p, 4), 'odds': odds}
+
+
+def cell_from_quotes(quotes):
+    vals = [q[0] for q in quotes]
+    line = median(vals)
+    cell = {'line': line, 'books': 1, 'lines': sorted(set(vals))}
+    same = [q for q in quotes if abs(q[0] - line) < 1e-9]
+    priced = [q for q in same if q[1] is not None and q[2] is not None]
+    chosen = (priced or same or quotes)[0]
+    if chosen[1] is not None:
+        cell['over'] = chosen[1]
+    if chosen[2] is not None:
+        cell['under'] = chosen[2]
+    if chosen[3] is not None:
+        cell['p_over'] = chosen[3]
+    return cell
 
 
 def regular_season_week(week):
@@ -107,6 +215,7 @@ def main(data_path='site/data.json', out_path='site/market.json'):
         if g['spread_home'] is not None and g['total'] is not None:
             g['itt_home'] = g['total'] / 2 - g['spread_home'] / 2
             g['itt_away'] = g['total'] / 2 + g['spread_home'] / 2
+        attach_game_prices(g, odds)
         out['games'][key] = g
         # player props (DraftKings = provider 100)
         try:
@@ -119,22 +228,37 @@ def main(data_path='site/data.json', out_path='site/market.json'):
         except Exception as e:
             out['unavailable'].append(f'{key}: props {e}')
             continue
-        lines = {}
+        lines, atd = {}, {}
         for it in items:
-            mk = TYPES.get((it.get('type') or {}).get('name'))
-            if not mk: continue
             m = re.search(r'/athletes/(\d+)', (it.get('athlete') or {}).get('$ref', ''))
-            v = ((it.get('current') or {}).get('target') or {}).get('value')
-            if not m or v is None: continue
+            if not m:
+                continue
             espn_id = m.group(1)
-            name = espn2name.get(espn_id)
             # No crosswalk hit: skip rather than key a bare name that can collide.
-            if not name: continue
-            lines.setdefault((espn_id, mk), []).append(float(v))
+            if espn_id not in espn2name:
+                continue
             latest = max(latest, it.get('lastUpdated') or '')
-        for (espn_id, mk), vals in lines.items():
+            tname = (it.get('type') or {}).get('name')
+            current = it.get('current') or {}
+            if tname == ATD_TYPE:
+                quote = atd_quote(current)
+                if quote:
+                    atd[espn_id] = quote
+                continue
+            mk = TYPES.get(tname)
+            if not mk:
+                continue
+            v = (current.get('target') or {}).get('value') if isinstance(current, dict) else None
+            if v is None:
+                continue
+            over, under, p_over = quote_prices(current)
+            lines.setdefault((espn_id, mk), []).append((float(v), over, under, p_over))
+        for (espn_id, mk), quotes in lines.items():
             rec = out['props'].setdefault(espn_id, {'name': espn2name.get(espn_id), 'espn': espn_id, 'game': key})
-            rec[mk] = {'line': median(vals), 'books': 1, 'lines': sorted(set(vals))}
+            rec[mk] = cell_from_quotes(quotes)
+        for espn_id, quote in atd.items():
+            rec = out['props'].setdefault(espn_id, {'name': espn2name.get(espn_id), 'espn': espn_id, 'game': key})
+            rec['atd'] = quote
     out['as_of'] = out['updated']  # ESPN's lastUpdated stamps are not reliable; use fetch time
     if compared >= 4 and mismatches / compared > 0.5:
         raise SystemExit(

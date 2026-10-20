@@ -212,6 +212,119 @@ def test_nflverse_week_filter_and_espn_two_point():
     assert round(by_name["Rashid Shaheed"]["actual"], 2) == 13.6
 
 
+def _props(stamp, generated, players, games):
+    return {
+        "v": 1,
+        "kind": "props",
+        "season": 2026,
+        "week": 6,
+        "generated": generated,
+        "stamp": stamp,
+        "as_of": generated,
+        "source": "ESPN (DraftKings)",
+        "games": games,
+        "players": players,
+    }
+
+
+def _prop_player(name, game, line, team="SEA"):
+    return {
+        "espn": name, "id": name, "name": name, "pos": "WR", "team": team, "game": game,
+        "rec_yds": {"line": line, "over": -110, "under": -110, "p_over": 0.5},
+        "model": {"rcy": 80},
+    }
+
+
+def test_props_freeze_with_the_projection_and_keep_the_price(tmp_path):
+    root = tmp_path / "snapshots"
+    early = _snap(
+        "2026-10-15T16-35Z", "2026-10-15T16:35:00Z",
+        [_player("Jaxon Smith-Njigba", "SEA", TNF["id"], 17.9)],
+        [TNF, EARLY, LATE],
+    )
+    early["props"] = _props(
+        "2026-10-15T16-35Z", "2026-10-15T16:35:00Z",
+        [_prop_player("Jaxon Smith-Njigba", TNF["id"], 93.5), _prop_player("Nico", EARLY["id"], 60, "HOU")],
+        [TNF, EARLY, LATE],
+    )
+    first = arch.archive(root, early, keep=6)
+    assert first["frozen"] == [] and first["frozen_props"] == []
+    week = root / "2026" / "wk06"
+    assert (week / "props" / "2026-10-15T16-35Z.json").is_file()
+    stored = json.loads((week / "2026-10-15T16-35Z.json").read_text())
+    assert "props" not in stored
+
+    friday = _snap(
+        "2026-10-16T12-00Z", "2026-10-16T12:00:00Z",
+        [_player("Jaxon Smith-Njigba", "SEA", TNF["id"], 18.4), _player("Nico", "HOU", EARLY["id"], 14)],
+        [TNF, EARLY, LATE],
+    )
+    friday["props"] = _props(
+        "2026-10-16T12-00Z", "2026-10-16T12:00:00Z",
+        [_prop_player("Jaxon Smith-Njigba", TNF["id"], 99.5), _prop_player("Nico", EARLY["id"], 70, "HOU")],
+        [TNF, EARLY, LATE],
+    )
+    second = arch.archive(root, friday, keep=6)
+    assert second["frozen_props"] == ["2026_06_SEA_DEN"]
+    frozen = json.loads((week / "prekickoff" / "props" / "2026_06_SEA_DEN.json").read_text())
+    assert frozen["kind"] == "prekickoff-props"
+    assert frozen["players"][0]["rec_yds"]["line"] == 93.5
+    assert frozen["players"][0]["rec_yds"]["over"] == -110
+    assert frozen["players"][0]["model"]["rcy"] == 80
+    assert frozen["game"]["total"] == 40.5
+    assert not (week / "prekickoff" / "props" / "2026_06_HOU_JAX.json").exists()
+
+    sunday = _snap(
+        "2026-10-18T14-00Z", "2026-10-18T14:00:00Z",
+        [_player("Nico", "HOU", EARLY["id"], 15)],
+        [TNF, EARLY, LATE],
+    )
+    sunday["props"] = _props(
+        "2026-10-18T14-00Z", "2026-10-18T14:00:00Z",
+        [_prop_player("Jaxon Smith-Njigba", TNF["id"], 110), _prop_player("Nico", EARLY["id"], 88, "HOU")],
+        [TNF, EARLY, LATE],
+    )
+    third = arch.archive(root, sunday, keep=6)
+    assert "2026_06_SEA_DEN" not in third["frozen_props"]
+    assert "2026_06_HOU_JAX" in third["frozen_props"]
+    still = json.loads((week / "prekickoff" / "props" / "2026_06_SEA_DEN.json").read_text())
+    assert still["players"][0]["rec_yds"]["line"] == 93.5
+    hou = json.loads((week / "prekickoff" / "props" / "2026_06_HOU_JAX.json").read_text())
+    assert hou["source_snapshot"] == "2026-10-16T12-00Z"
+    assert hou["players"][0]["rec_yds"]["line"] == 70
+    manifest = json.loads((week / "manifest.json").read_text())
+    assert manifest["prekickoff_props"]["2026_06_SEA_DEN"]["snapshot"] == "2026-10-15T16-35Z"
+    assert "2026-10-15T16-35Z" in manifest["props"]
+
+
+def test_prop_prune_keeps_the_frozen_copy(tmp_path):
+    root = tmp_path / "snapshots"
+    for hour in range(1, 6):
+        stamp = f"2026-10-15T{hour:02d}-00Z"
+        generated = f"2026-10-15T{hour:02d}:00:00Z"
+        snap = _snap(stamp, generated, [], [TNF, EARLY])
+        snap["props"] = _props(
+            stamp, generated,
+            [_prop_player("Jaxon Smith-Njigba", TNF["id"], 90 + hour)],
+            [TNF, EARLY],
+        )
+        arch.archive(root, snap, keep=2)
+    post = _snap("2026-10-16T12-00Z", "2026-10-16T12:00:00Z", [], [TNF, EARLY])
+    post["props"] = _props(
+        "2026-10-16T12-00Z", "2026-10-16T12:00:00Z",
+        [_prop_player("Jaxon Smith-Njigba", TNF["id"], 99)],
+        [TNF, EARLY],
+    )
+    arch.archive(root, post, keep=1)
+    week = root / "2026" / "wk06"
+    hourly = sorted(p.name for p in (week / "props").glob("*.json"))
+    assert hourly == ["2026-10-16T12-00Z.json"]
+    frozen = json.loads((week / "prekickoff" / "props" / "2026_06_SEA_DEN.json").read_text())
+    assert frozen["players"][0]["rec_yds"]["line"] == 95
+    assert frozen["source_snapshot"] == "2026-10-15T05-00Z"
+    assert not (week / "prekickoff" / "props" / "2026_06_HOU_JAX.json").exists()
+
+
 def test_score_report_shape(tmp_path):
     root = tmp_path / "snapshots"
     pre_game = _snap(
