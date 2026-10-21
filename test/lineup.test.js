@@ -146,13 +146,13 @@ test('swap rows keep the start and the player they replace separate', () => {
   assert.equal(rows[1].kind, 'empty');
 });
 
-test('Sleeper links open the team tab, with a best-effort app path and a web fallback', () => {
+test('Sleeper links open the league the app routes, with the web team page as fallback', () => {
   const id = '1049283494438133760';
   const links = sleeperTeamLinks(id);
   assert.equal(links.web, `https://sleeper.com/leagues/${id}/team`);
-  assert.equal(links.app, `sleeper://leagues/${id}/team`);
+  assert.equal(links.app, `sleeper://shortcuts?league_id=${id}`);
   assert.equal(links.legacyApp, 'sleeperbot://open');
-  assert.match(links.androidIntent, new RegExp(`^intent://leagues/${id}/team#Intent;scheme=sleeper;`));
+  assert.match(links.androidIntent, new RegExp(`^intent://shortcuts\\?league_id=${id}#Intent;scheme=sleeper;`));
   assert.match(links.androidIntent, /category=android\.intent\.category\.BROWSABLE/);
   assert.doesNotMatch(links.androidIntent, /package=/);
   assert.doesNotMatch(links.androidIntent, /scheme=sleeperbot/);

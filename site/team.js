@@ -610,7 +610,7 @@
     if (open) open.addEventListener('click', e => openSleeperTeam(e, open));
   }
 
-  // Mobile tries the installed app on the team path, then the web team page.
+  // Mobile tries the installed app on the league shortcut, then the web team page.
   // Desktop follows the link, which is already the web team page.
   function openSleeperTeam(e, a) {
     const links = {
