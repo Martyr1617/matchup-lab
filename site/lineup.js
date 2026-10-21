@@ -194,42 +194,41 @@
 
   // Where "Open in Sleeper" sends the user.
   //
-  // com.sleeperbot 156.0 (versionCode 4195846), base APK from APKPure on
-  // 2026-10-21, MainActivity intent filters:
-  // - sleeperbot://open only. scheme sleeperbot AND host open. A path whose
-  //   host is "leagues" does not match, and an intent with package=com.sleeperbot
-  //   then opens the Play Store. sleeperbot://open launches the app and does
-  //   not name a team, so it is not the button.
-  // - sleeper:// with no host and no path. Any sleeper:// URI matches, including
-  //   sleeper://leagues/<id>/team. That is the deepest path this filter allows
-  //   that mirrors the web TEAM route. Whether the app's router lands on the
-  //   lineup screen is best-effort: this environment cannot open the native app.
-  // - https on sleeper.com / sleeper.app / sleeper.im / sleeper.dev, autoVerify,
-  //   pathPattern only /topic/.*, /topics/.*, /channels/.*, /message/.*.
-  //   /leagues/<id>/team does not match, so that URL stays in the browser.
-  //   The web client routes it to selectedTab TEAM. Logged out, Sleeper
-  //   redirects to /?redirect=/leagues/<id>/team. That page is the fallback.
-  // iOS was not opened in the installed app. The App Store action
-  // sleeper://picks/competition/... shows the current app accepts a path on
-  // sleeper://, so iOS uses the same team path and falls back to the web page.
+  // Verified from com.sleeperbot 156.0 (versionCode 4195846) Hermes bytecode,
+  // DeepLinkUrlHandler. Not verified by opening the installed app.
+  //
+  // Any sleeper:// URI launches the app (MainActivity filter has no host or
+  // path). The JS router then ignores paths it does not recognize, which is
+  // why sleeper://leagues/<id>/team opened the last screen. The one external
+  // URL that navigates to a specific league is a URL whose string includes
+  // "shortcuts" and whose query has league_id. That calls
+  // navigate("FantasyTab", { screen: "LeaguesDetailScreen", params: { leagueId } }).
+  // Params are only leagueId, so this is the league home, not the team tab.
+  // The fantasy/leagues/<id> path is real, but only on the unregistered scheme
+  // sleeper-internal-deeplink://. https App Links are only /channels, /topics,
+  // /topic, and /message, and the public league payload has no channel id.
+  //
+  // No package=: a non-matching intent with package=com.sleeperbot opens the
+  // Play Store. The web team page is the fallback when the app is absent.
+  // iOS uses the same sleeper:// URL. The handler lives in the shared React
+  // Native bundle; the iOS binary itself was not disassembled.
   function sleeperTeamLinks(leagueId) {
     const id = String(leagueId || '');
     if (!/^\d{1,20}$/.test(id)) return null;
     const web = `https://sleeper.com/leagues/${id}/team`;
-    const path = `leagues/${id}/team`;
+    const route = `shortcuts?league_id=${id}`;
     const fallback = encodeURIComponent(web);
     return {
       web,
-      app: `sleeper://${path}`,
+      app: `sleeper://${route}`,
       legacyApp: 'sleeperbot://open',
-      // No package= param: that is what sends a non-matching intent to the Play Store.
-      androidIntent: `intent://${path}#Intent;scheme=sleeper;action=android.intent.action.VIEW;category=android.intent.category.DEFAULT;category=android.intent.category.BROWSABLE;S.browser_fallback_url=${fallback};end`,
+      androidIntent: `intent://${route}#Intent;scheme=sleeper;action=android.intent.action.VIEW;category=android.intent.category.DEFAULT;category=android.intent.category.BROWSABLE;S.browser_fallback_url=${fallback};end`,
     };
   }
 
-  // Desktop uses the verified web team page. Android uses the sleeper:// intent,
-  // which matches the installed app's filter, and falls back to that web page.
-  // iOS tries the same sleeper:// path, then the web page.
+  // Desktop uses the web team page. Android uses the sleeper:// intent, which
+  // matches the installed app's filter and the league_id shortcut handler, and
+  // falls back to that web page. iOS tries the same sleeper:// URL, then the web page.
   function sleeperOpenPlan(links, ua) {
     const agent = String(ua || '');
     if (!links) return null;
