@@ -64,6 +64,7 @@ fetch data/ep_2026.csv           "https://github.com/ffverse/ffopportunity/relea
 # Prior seasons feed trade baselines for injured and missing players. Optional.
 fetch data/player_stats.csv      "$B/player_stats/player_stats.csv" 0
 fetch data/players_2025.csv      "$B/stats_player/stats_player_week_2025.csv" 0
+fetch data/snaps_2025.csv        "$B/snap_counts/snap_counts_2025.csv" 0
 python3 build_data.py
 # News is optional. A broken feed must not fail the projection build.
 python3 fetch_news.py site/data.json site/news.json ${ML_PREV_NEWS:-} || echo "WARN: news build failed; projections are unchanged"

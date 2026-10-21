@@ -371,7 +371,9 @@
     const data = env && env.data;
     if (!data || !data.players || pl.id == null) return null;
     const scoreKey = typeof scoringKey === 'string' ? scoringKey : 'custom';
-    const key = String(week) + '|' + scoreKey;
+    // Snap blend is part of the key so a full-workload pass cannot reuse the
+    // official ranking, or leave its own ranking behind for the official one.
+    const key = String(week) + '|' + scoreKey + '|s' + tuneOf(env).snapBlend;
     let bucket = roleRankCache.get(data);
     if (!bucket) { bucket = {}; roleRankCache.set(data, bucket); }
     if (!bucket[key]) {
@@ -544,5 +546,196 @@
       p15: dist.pOver(15), p20: dist.pOver(20), reg: regFlag(pl), defNote: inj.note };
   }
 
-  return { SCORING, lgamma, gammaP, makeDist, PREDICTIVE_SPREAD, SNAP_BLEND, HEALTHY_SPREAD, ROLE_FLOOR_N, project, outcomeFloor, hurtStatus, thinRole, gameFor, weatherAdj, vegasFor, propsFor, propMean, boomBust, matchupGrade, normName, blend };
+  // Display-only healthy-usage projection. The official project() result is
+  // what rankings, start/sit, the optimal lineup, trades, and waivers use.
+  const FULL_DECAY = 0.7;
+  const FULL_K_SHARE = 4;
+  const FULL_K_CA = 6;
+  const FULL_K_PA = 6;
+  const FULL_TREND = 0.25;
+  const FULL_COLLAPSE = 0.2;
+  const FULL_PRIOR_EFF = 0.5;
+  const FULL_WORK_GAP = 1.5;
+  const FULL_WORK_RATIO = 1.15;
+  const fullCache = new WeakMap();
+
+  function usageGames(pl, week) {
+    return (pl.log || []).filter(g => g && !g.prior && Number(g.wk) < week);
+  }
+
+  function collapseFlags(games) {
+    const snaps = [];
+    for (const g of games) {
+      const sp = g.sp == null ? null : Number(g.sp);
+      snaps.push(sp != null && Number.isFinite(sp) ? sp : null);
+    }
+    const known = snaps.filter(sp => sp != null);
+    const hasStarter = known.some(sp => sp >= 0.50);
+    const maxSp = known.length ? Math.max.apply(null, known) : null;
+    const flags = snaps.map(sp => {
+      if (sp == null) return false;
+      if (hasStarter && sp < 0.25) return true;
+      if (maxSp != null && maxSp >= 0.55 && sp < 0.40 && sp < 0.40 * maxSp) return true;
+      return false;
+    });
+    if (flags.length && flags.every(Boolean)) return flags.map(() => false);
+    return flags;
+  }
+
+  function meanOf(games, flags, read) {
+    let nume = 0, den = 0;
+    for (let i = 0; i < games.length; i++) {
+      const val = read(games[i]);
+      if (val == null || !Number.isFinite(val)) continue;
+      const w = flags[i] ? FULL_COLLAPSE : 1;
+      nume += w * val;
+      den += w;
+    }
+    return den > 0 ? [nume / den, den] : [null, 0];
+  }
+
+  function decayMean(games, week, key) {
+    const cur = week - 1;
+    let nume = 0, den = 0;
+    for (const g of games) {
+      const w = FULL_DECAY ** (cur - Number(g.wk));
+      nume += w * (Number(g[key]) || 0);
+      den += w;
+    }
+    return den ? nume / den : 0;
+  }
+
+  function bayesMean(mean, n, prior, k) {
+    const hasPrior = prior != null && Number.isFinite(Number(prior));
+    if (mean == null && !hasPrior) return null;
+    if (!hasPrior) return mean;
+    if (mean == null || !(n > 0)) return Number(prior);
+    return (n * mean + k * Number(prior)) / (n + k);
+  }
+
+  function teamPlayedWeek(data, team, week) {
+    const sched = data && data.schedule;
+    const games = sched && (sched[String(week)] || sched[week]) || [];
+    return games.some(g => g && (g.home === team || g.away === team));
+  }
+
+  function workloadPrior(pl, env) {
+    const own = pl && pl.prior;
+    if (own && (own.ca != null || own.ts != null || own.pa != null || (own.t && typeof own.t === 'object'))) return own;
+    const bag = (env && env.priors) || (typeof globalThis !== 'undefined' ? globalThis.ML_PRIORS : null);
+    if (!bag || !bag.byId) return null;
+    const season = env && env.data && env.data.meta && env.data.meta.season;
+    if (bag.season != null && season != null && Number(bag.season) !== Number(season)) return null;
+    return bag.byId[String(pl.id)] || null;
+  }
+
+  function practiceText(pl) {
+    const raw = pl && pl.inj && pl.inj.practice;
+    if (raw == null) return null;
+    const text = String(raw).trim();
+    if (!text || /^null$/i.test(text)) return null;
+    return text;
+  }
+
+  function healthyVolume(pl, week) {
+    const games = usageGames(pl, week);
+    if (!games.length) return null;
+    const flags = collapseFlags(games);
+    const share = meanOf(games, flags, g => (g.ts == null || !Number.isFinite(Number(g.ts)) ? null : Number(g.ts)));
+    const carries = meanOf(games, flags, g => Number(g.ca) || 0);
+    const passes = meanOf(games, flags, g => Number(g.pa) || 0);
+    return { games, flags, ts: share[0], nTs: share[1], ca: carries[0], nCa: carries[1], pa: passes[0], nPa: passes[1] };
+  }
+
+  // Healthy-game usage, shrunk toward last season, plus a quarter of the
+  // current recency average so a real role change still shows up. Matchup,
+  // Vegas, expected TDs, and a posted prop blend stay on the normal stack.
+  function fullWorkload(pl, week, scoringKey, env) {
+    if (!pl || !pl.team || !env || !env.data) return null;
+    const scoreKey = typeof scoringKey === 'string' ? scoringKey : 'custom';
+    const cached = fullCache.get(pl);
+    const cacheKey = String(week) + '|' + scoreKey;
+    if (cached && cached.key === cacheKey && cached.env === env) return cached.val;
+    const store = val => { fullCache.set(pl, { key: cacheKey, env, val }); return val; };
+    try {
+      const mine = healthyVolume(pl, week);
+      if (!mine) return store(null);
+      const last = mine.games.reduce((m, g) => Math.max(m, Number(g.wk) || 0), 0);
+      let missed = false;
+      for (let w = last + 1; w < week; w++) {
+        if (teamPlayedWeek(env.data, pl.team, w)) { missed = true; break; }
+      }
+      const collapsed = mine.flags.some(Boolean);
+      if (!missed && !collapsed) return store(null);
+      const official = project(pl, week, scoringKey, env);
+      if (!official || official.bye || !Number.isFinite(official.pts)) return store(null);
+      const prior = workloadPrior(pl, env);
+      const off = env.data.team_off && env.data.team_off[pl.team];
+      const teamPa = off && Number(off.pass_att_pg) > 0 ? Number(off.pass_att_pg) : 32;
+      let ts = bayesMean(mine.ts, mine.nTs, prior && prior.ts, FULL_K_SHARE);
+      let ca = bayesMean(mine.ca, mine.nCa, prior && prior.ca, FULL_K_CA);
+      let pa = bayesMean(mine.pa, mine.nPa, prior && prior.pa, FULL_K_PA);
+      const roles = env.data.roles && (env.data.roles[String(week)] || env.data.roles[week]);
+      const chart = roles && roles.chart && roles.chart[pl.team] && roles.chart[pl.team][pl.pos];
+      const out = new Set(((roles && roles.out) || []).map(String));
+      const id = String(pl.id);
+      if (chart && chart.length && !out.has(id)) {
+        const active = chart.map(String).filter(pid => !out.has(pid));
+        if (active.length && active[0] === id) {
+          const mates = chart.map(String).filter(pid => out.has(pid) && pid !== id);
+          const byId = playersById(env.data);
+          let bestCa = 0, bestTs = 0, bestPa = 0;
+          for (const pid of mates) {
+            const mate = byId.get(pid);
+            if (!mate || mate.pos !== pl.pos) continue;
+            const vol = healthyVolume(mate, week);
+            if (!vol) continue;
+            if ((vol.ca || 0) > bestCa) bestCa = vol.ca;
+            if ((vol.ts || 0) > bestTs) bestTs = vol.ts;
+            if ((vol.pa || 0) > bestPa) bestPa = vol.pa;
+          }
+          if (pl.pos === 'QB' && bestPa > (pa || 0)) pa = bestPa;
+          if (pl.pos === 'RB' && bestCa > (ca || 0)) ca = bestCa;
+          if ((pl.pos === 'WR' || pl.pos === 'TE' || pl.pos === 'RB') && ts != null && bestTs > ts) ts = bestTs;
+        }
+      }
+      const recentTg = decayMean(mine.games, week, 'tg');
+      const recentCa = decayMean(mine.games, week, 'ca');
+      const recentPa = decayMean(mine.games, week, 'pa');
+      let tg = ts == null ? null : ts * teamPa;
+      tg = tg == null ? recentTg : (1 - FULL_TREND) * tg + FULL_TREND * recentTg;
+      ca = ca == null ? recentCa : (1 - FULL_TREND) * ca + FULL_TREND * recentCa;
+      pa = pa == null ? recentPa : (1 - FULL_TREND) * pa + FULL_TREND * recentPa;
+      const totals = {};
+      const countKeys = ['pa', 'py', 'ptd', 'int', 'ca', 'ry', 'rtd', 'tg', 'rc', 'rcy', 'rctd', 'fl'];
+      for (const key of countKeys) {
+        let sum = 0;
+        for (const g of mine.games) sum += Number(g[key]) || 0;
+        if (prior && prior.t && prior.t[key] != null) sum += FULL_PRIOR_EFF * Number(prior.t[key]);
+        totals[key] = sum;
+      }
+      const clone = Object.assign({}, pl, {
+        w: Object.assign({}, pl.w, { pa, ca, tg }),
+        t: Object.assign({}, pl.t, totals),
+        g: mine.games.length,
+      });
+      const fullEnv = Object.assign({}, env, { tune: Object.assign({}, env.tune, { snapBlend: 0 }) });
+      const full = project(clone, week, scoringKey, fullEnv);
+      if (!full || full.bye || !Number.isFinite(full.pts)) return store(null);
+      const gateOff = scoreKey === 'ppr' ? official : project(pl, week, 'ppr', env);
+      const gateFull = scoreKey === 'ppr' ? full : project(clone, week, 'ppr', fullEnv);
+      if (!gateOff || !gateFull || !(gateFull.pts >= gateOff.pts + FULL_WORK_GAP) || !(gateFull.pts >= gateOff.pts * FULL_WORK_RATIO)) return store(null);
+      return store({
+        pts: full.pts,
+        base: official.pts,
+        practice: practiceText(pl),
+        missed,
+        collapsed,
+      });
+    } catch (e) {
+      return store(null);
+    }
+  }
+
+  return { SCORING, lgamma, gammaP, makeDist, PREDICTIVE_SPREAD, SNAP_BLEND, HEALTHY_SPREAD, ROLE_FLOOR_N, FULL_WORK_GAP, FULL_WORK_RATIO, project, fullWorkload, outcomeFloor, hurtStatus, thinRole, gameFor, weatherAdj, vegasFor, propsFor, propMean, boomBust, matchupGrade, normName, blend };
 });

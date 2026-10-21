@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { lgamma, makeDist, project, normName, propMean, PREDICTIVE_SPREAD, SNAP_BLEND, outcomeFloor, HEALTHY_SPREAD, ROLE_FLOOR_N } = require('../site/model');
+const { lgamma, makeDist, project, fullWorkload, normName, propMean, PREDICTIVE_SPREAD, SNAP_BLEND, outcomeFloor, HEALTHY_SPREAD, ROLE_FLOOR_N, FULL_WORK_GAP, FULL_WORK_RATIO } = require('../site/model');
 
 function factors() {
   return { rush_att: 1, ypc: 1, rush_td: 1, pass_att: 1, comp_pct: 1, ypa: 1, pass_td: 1, int: 1 };
@@ -291,4 +291,54 @@ test('the displayed floor stays at or above zero, and only a healthy starter use
   assert.equal(backup.roleFloor, false);
   assert.ok(Math.abs(backup.floor - Math.max(0, backup.dist.quantile(0.1))) < 1e-6);
   assert.ok(Math.abs(alone.floor - Math.max(0, alone.dist.quantile(0.1))) < 1e-6);
+});
+
+test('full workload is a second number and does not change the official projection', () => {
+  assert.equal(FULL_WORK_GAP, 1.5);
+  assert.equal(FULL_WORK_RATIO, 1.15);
+  const e = env();
+  e.data.meta = { season: 2026 };
+  e.data.schedule[4] = [{ home: 'BUF', away: 'NYJ' }];
+  e.data.schedule[5] = [{ home: 'NYJ', away: 'BUF' }];
+  e.data.team_off.BUF.pass_att_pg = 34;
+  const prior = { ca: 18, ts: 0.12, pa: 0, t: { ca: 280, ry: 1100, rtd: 7, tg: 40, rc: 30, rcy: 220, rctd: 1, pa: 0, py: 0, ptd: 0, int: 0, fl: 0 } };
+  const healthy = {
+    id: 'rb-healthy', name: 'Healthy Back', pos: 'RB', team: 'BUF', g: 5, cv: 0.45,
+    w: { pa: 0, py: 0, ptd: 0, int: 0, ca: 15, ry: 70, rtd: 0.4, tg: 3, rc: 2, rcy: 16, rctd: 0.1 },
+    t: { pa: 0, py: 0, ptd: 0, int: 0, ca: 75, ry: 350, rtd: 2, tg: 15, rc: 10, rcy: 80, rctd: 0, fl: 0, two: 0 },
+    log: [1, 2, 3, 4, 5].map(wk => ({ wk, ca: 15, ry: 70, rtd: 0, tg: 3, rc: 2, rcy: 16, rctd: 0, ts: 0.1, sp: 0.7, pa: 0 })),
+    prior,
+  };
+  const healthyBefore = project(healthy, 6, 'ppr', e).pts;
+  assert.equal(fullWorkload(healthy, 6, 'ppr', e), null);
+  assert.equal(project(healthy, 6, 'ppr', e).pts, healthyBefore);
+
+  const hurt = {
+    id: 'rb-hurt', name: 'Hurt Back', pos: 'RB', team: 'BUF', g: 3, cv: 0.5,
+    inj: { practice: 'Limited Participation in Practice' },
+    w: { pa: 0, py: 0, ptd: 0, int: 0, ca: 6, ry: 24, rtd: 0, tg: 1.2, rc: 1, rcy: 6, rctd: 0 },
+    t: { pa: 0, py: 0, ptd: 0, int: 0, ca: 32, ry: 140, rtd: 0, tg: 6, rc: 4, rcy: 20, rctd: 0, fl: 0, two: 0 },
+    log: [
+      { wk: 1, ca: 15, ry: 70, rtd: 0, tg: 3, rc: 2, rcy: 12, rctd: 0, ts: 0.12, sp: 0.72, pa: 0 },
+      { wk: 2, ca: 2, ry: 5, rtd: 0, tg: 1, rc: 1, rcy: 4, rctd: 0, ts: 0.03, sp: 0.1, pa: 0 },
+      { wk: 3, ca: 15, ry: 65, rtd: 0, tg: 2, rc: 1, rcy: 4, rctd: 0, ts: 0.1, sp: 0.7, pa: 0 },
+    ],
+    prior,
+  };
+  const carries = hurt.w.ca;
+  const official = project(hurt, 6, 'ppr', e);
+  const full = fullWorkload(hurt, 6, 'ppr', e);
+  assert.ok(full, 'expected a full-workload number');
+  assert.ok(full.pts >= official.pts + FULL_WORK_GAP, `${full.pts} vs ${official.pts}`);
+  assert.ok(full.pts >= official.pts * FULL_WORK_RATIO);
+  assert.equal(full.practice, 'Limited Participation in Practice');
+  assert.equal(full.missed, true);
+  assert.equal(full.collapsed, true);
+  assert.equal(hurt.w.ca, carries);
+  assert.equal(project(hurt, 6, 'ppr', e).pts, official.pts);
+  const halfOff = project(hurt, 6, 'half', e);
+  const halfFull = fullWorkload(hurt, 6, 'half', e);
+  assert.ok(halfFull && halfFull.pts !== official.pts);
+  assert.ok(halfFull.pts > halfOff.pts);
+  assert.equal(project(hurt, 6, 'ppr', e).pts, official.pts);
 });
