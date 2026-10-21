@@ -83,6 +83,151 @@ def attach_snap_share(players, snaps, pfr_to_gsis, cur_week, decay=0.7):
     return n
 
 
+COLLAPSE_W = 0.2
+
+
+def _collapse_flags(snaps):
+    """True on games whose snap share collapsed, unless every game did."""
+    known = [s for s in snaps if s is not None]
+    has_starter = any(s >= 0.50 for s in known)
+    max_sp = max(known) if known else None
+    flags = []
+    for sp in snaps:
+        bad = False
+        if sp is not None and has_starter and sp < 0.25:
+            bad = True
+        elif sp is not None and max_sp is not None and max_sp >= 0.55 and sp < 0.40 and sp < 0.40 * max_sp:
+            bad = True
+        flags.append(bad)
+    if flags and all(flags):
+        return [False] * len(flags)
+    return flags
+
+
+def _prior_mean(values, flags):
+    nume = den = 0.0
+    seen = False
+    for val, bad in zip(values, flags):
+        if val is None:
+            continue
+        w = COLLAPSE_W if bad else 1.0
+        nume += w * val
+        den += w
+        seen = True
+    if not seen or den <= 0:
+        return None
+    return nume / den
+
+
+def prior_profiles(year, data_dir, pfr_to_gsis=None):
+    """Previous-season usage means and counting totals, keyed by gsis id.
+
+    A missing file returns {}. Snap share discounts a collapsed game the same
+    way the full-workload display does. Counting totals stay unweighted.
+    """
+    path = os.path.join(data_dir, f'players_{year}.csv')
+    if not os.path.exists(path) or os.path.getsize(path) < 100:
+        return {}
+    try:
+        df = pd.read_csv(path, low_memory=False)
+    except Exception as ex:
+        print('prior season unavailable', ex)
+        return {}
+    if 'season_type' in df.columns:
+        df = df[df.season_type == 'REG']
+    need = {'player_id', 'position', 'week'}
+    if not need.issubset(df.columns):
+        return {}
+    df = df[df.position.isin(SKILL_POS) & df.week.between(1, 18)].copy()
+    if not len(df):
+        return {}
+    snaps = {}
+    snap_path = os.path.join(data_dir, f'snaps_{year}.csv')
+    if pfr_to_gsis and os.path.exists(snap_path) and os.path.getsize(snap_path) > 0:
+        try:
+            s = pd.read_csv(snap_path, low_memory=False)
+            if 'game_type' in s.columns:
+                s = s[s.game_type == 'REG']
+            if 'week' in s.columns and 'pfr_player_id' in s.columns and 'offense_pct' in s.columns:
+                s = s[s.week.between(1, 18) & s.pfr_player_id.notna()]
+                for row in s.itertuples(index=False):
+                    gid = pfr_to_gsis.get(row.pfr_player_id)
+                    if not gid:
+                        continue
+                    try:
+                        pct = float(row.offense_pct)
+                    except (TypeError, ValueError):
+                        continue
+                    if pct != pct:
+                        continue
+                    snaps[(str(gid), int(row.week))] = pct
+        except Exception as ex:
+            print('prior snaps unavailable', ex)
+    count_cols = (
+        'attempts', 'passing_yards', 'passing_tds', 'passing_interceptions',
+        'carries', 'rushing_yards', 'rushing_tds', 'targets', 'receptions',
+        'receiving_yards', 'receiving_tds', 'rushing_fumbles_lost',
+        'receiving_fumbles_lost', 'sack_fumbles_lost',
+    )
+    for col in count_cols:
+        if col not in df.columns:
+            df[col] = 0.0
+        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
+    if 'target_share' in df.columns:
+        df['target_share'] = pd.to_numeric(df['target_share'], errors='coerce')
+    else:
+        df['target_share'] = float('nan')
+    df['week'] = df['week'].astype(int)
+    out = {}
+    keys = ('pa', 'py', 'ptd', 'int', 'ca', 'ry', 'rtd', 'tg', 'rc', 'rcy', 'rctd', 'fl')
+    for pid, rows in df.groupby('player_id'):
+        rows = rows.sort_values('week').groupby('week', as_index=False).tail(1)
+        games = []
+        for row in rows.itertuples(index=False):
+            fl = float(row.rushing_fumbles_lost + row.receiving_fumbles_lost + row.sack_fumbles_lost)
+            ts = row.target_share
+            games.append({
+                'wk': int(row.week),
+                'pa': float(row.attempts), 'py': float(row.passing_yards),
+                'ptd': float(row.passing_tds), 'int': float(row.passing_interceptions),
+                'ca': float(row.carries), 'ry': float(row.rushing_yards), 'rtd': float(row.rushing_tds),
+                'tg': float(row.targets), 'rc': float(row.receptions),
+                'rcy': float(row.receiving_yards), 'rctd': float(row.receiving_tds),
+                'fl': fl,
+                'ts': None if ts != ts else float(ts),
+                'sp': snaps.get((str(pid), int(row.week))),
+            })
+        if not games:
+            continue
+        flags = _collapse_flags([g['sp'] for g in games])
+        totals = {k: sum(g[k] for g in games) for k in keys}
+        touches = totals['tg'] + totals['ca']
+        if rows.iloc[0].position == 'QB':
+            if totals['pa'] < 20 and touches < 10:
+                continue
+        elif touches < 6:
+            continue
+        def rnd(v, n):
+            return None if v is None else round(float(v), n)
+        profile = {
+            'ts': rnd(_prior_mean([g['ts'] for g in games], flags), 4),
+            'ca': rnd(_prior_mean([g['ca'] for g in games], flags), 3),
+            'pa': rnd(_prior_mean([g['pa'] for g in games], flags), 3),
+            't': {k: round(float(totals[k]), 1) for k in keys},
+        }
+        out[str(pid)] = profile
+    return out
+
+
+def write_priors_js(profiles, season, prior_year, path='site/priors.js'):
+    """Browser fallback used until data.json carries each player's prior."""
+    payload = {'season': int(season), 'priorSeason': int(prior_year), 'byId': profiles}
+    text = 'globalThis.ML_PRIORS=' + json.dumps(payload, separators=(',', ':')) + ';\n'
+    with open(path, 'w') as f:
+        f.write(text)
+    return len(profiles)
+
+
 def build_roles(games, injuries, depth_path, season):
     """Pregame depth-chart order and players ruled out, keyed by week.
 
@@ -519,6 +664,17 @@ def main():
         except Exception as ex:
             print('snaps unavailable', ex)
     print('snap implied', attach_snap_share(players, snaps, pfr_to_gsis, CUR_WEEK, DECAY))
+    priors = prior_profiles(SEASON - 1, D, pfr_to_gsis)
+    n_prior = 0
+    for pl in players:
+        prof = priors.get(pl['id'])
+        if prof:
+            pl['prior'] = prof
+            n_prior += 1
+    if priors:
+        print('prior profiles', n_prior, 'wrote', write_priors_js(priors, SEASON, SEASON - 1))
+    else:
+        print('prior profiles', 0)
     roles = build_roles(g, pd.read_csv(D + 'injuries_2026.csv'), D + 'depth_2026.csv', SEASON)
     print('role weeks', len(roles))
     adv, team_ctx, avail = build_advanced.build(CUR_WEEK, players, season=SEASON)

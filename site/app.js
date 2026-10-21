@@ -12,6 +12,28 @@
   function makeDist(mean, cv) { return window.MLModel.makeDist(mean, cv); }
   function gameFor(team, week) { return window.MLModel.gameFor(team, week, state.data); }
   function project(pl, week, scoringKey) { return window.MLModel.project(pl, week, scoringKey, state); }
+  function workloadOf(pl) {
+    if (!pl || !window.MLModel.fullWorkload) return null;
+    try { return window.MLModel.fullWorkload(pl, state.week, state.scoring, state); }
+    catch (e) { return null; }
+  }
+  function workloadNote(full) {
+    let text = 'Projection discounts his injury-shortened games; this is his number at a normal healthy workload.';
+    if (full && full.practice) text += ' Practice: ' + full.practice + '.';
+    return text;
+  }
+  function workloadMark(pl) {
+    const full = workloadOf(pl);
+    if (!full) return '';
+    const note = esc(workloadNote(full));
+    return `<span class="full-work" data-gl="If full workload" title="${note}">${f1(full.pts)} if full workload</span>`;
+  }
+  function workloadHero(pl, pr) {
+    const full = workloadOf(pl);
+    if (!full) return '';
+    const note = esc(workloadNote(full));
+    return `<div class="full-work-line"><span class="full-work" data-gl="If full workload" title="${note}">${f1(pr.pts)} proj · ${f1(full.pts)} if full workload</span><span class="full-work-why">${note}</span></div>`;
+  }
   function propMean(o, yards) { return window.MLModel.propMean(o, yards); }
 
   // ---------- Theme ----------
@@ -600,7 +622,7 @@
         <td class="matchup"><span class="vs">${pr.home ? 'vs' : '@'}</span> ${esc(pr.opp)} <span class="grade ${pr.grade.cls} sm">${pr.grade.label}</span><span class="when">${fmtKick(pr.game)}</span>${vegasLine}${weatherChip(pr.game, pr)}</td>
         <td>${propCell}</td>
         <td><div class="chips">${opp}</div></td>
-        <td class="num"><span class="projv">${f1(pr.pts)}</span>${pr.mktPts != null ? `<div class="mktv" data-gl="mkt">mkt ${f1(pr.mktPts)}</div>` : ''}</td>
+        <td class="num"><div class="proj-stack"><span class="projv">${f1(pr.pts)}</span>${workloadMark(pl)}${pr.mktPts != null ? `<div class="mktv" data-gl="mkt">mkt ${f1(pr.mktPts)}</div>` : ''}</div></td>
         <td class="num"><span class="range"><span class="fl">${f1(pr.floor)}</span><span class="rg-sep">–</span><span class="cl">${f1(pr.ceil)}</span></span></td>
         <td class="num bbcell"><span class="boom">${pct(pr.bb.boom)}</span> / <span class="bust">${pct(pr.bb.bust)}</span></td>
         <td><div class="flags">${flags || '<span class="na">—</span>'}</div></td>
@@ -755,6 +777,7 @@
         ${pr.bye ? '' : `<div class="proj-hero">
           <div class="lbl">Week ${state.week} projection · ${S.name}</div>
           <div class="big">${f1(pr.pts)}</div>
+          ${workloadHero(pl, pr)}
           <div class="rng"><span class="band floor"><span data-gl="Floor">Floor</span> <b>${f1(pr.floor)}</b></span><span class="band ceil">Ceiling <b>${f1(pr.ceil)}</b></span><span class="rng-meta">Boom ${pct(pr.bb.boom)} · Bust ${pct(pr.bb.bust)}${pr.mktPts != null ? ` · Market ${f1(pr.mktPts)}` : ''} &nbsp;|&nbsp; ${pr.home ? 'vs' : '@'} ${esc(tn(pr.opp))} · ${fmtKick(pr.game)}</span></div>
           ${weatherText(pr.game) ? `<div class="rng wx-line">Weather: ${esc(weatherText(pr.game))}${pr.wx && pr.wx.tags.length ? ` — ${esc(pr.wx.tags.join(', '))}, projection ${pr.wxDelta < 0 ? 'lowered' : 'raised'} ${f1(Math.abs(pr.wxDelta))} pts` : ''}</div>` : ''}
         </div>`}
@@ -1023,7 +1046,9 @@
     const render = () => {
       list.innerHTML = items.length ? items.map((it, i) => {
         const pr = project(it, state.week, state.scoring);
-        return `<li role="option" data-id="${esc(it.id)}" aria-selected="${i === active}">${avatar(it)}<div><div>${esc(it.name)}</div><div class="meta"><span class="pos ${it.pos}">${it.pos}</span> ${esc(it.team)} · ${pr.bye ? 'BYE' : (pr.home ? 'vs ' : '@ ') + pr.opp}</div></div><span class="proj">${pr.bye ? '—' : f1(pr.pts)}</span></li>`;
+        const full = pr.bye ? null : workloadOf(it);
+        const fullHtml = full ? `<span class="full-work" data-gl="If full workload" title="${esc(workloadNote(full))}">${f1(full.pts)} if full workload</span>` : '';
+        return `<li role="option" data-id="${esc(it.id)}" aria-selected="${i === active}">${avatar(it)}<div><div>${esc(it.name)}</div><div class="meta"><span class="pos ${it.pos}">${it.pos}</span> ${esc(it.team)} · ${pr.bye ? 'BYE' : (pr.home ? 'vs ' : '@ ') + pr.opp}</div></div><span class="proj">${pr.bye ? '—' : f1(pr.pts)}${fullHtml}</span></li>`;
       }).join('') : `<li class="empty">No players match. Try a last name.</li>`;
       list.hidden = false; input.setAttribute('aria-expanded', 'true');
       $$('li[data-id]', list).forEach(li => li.addEventListener('mousedown', e => { e.preventDefault(); openPlayer(li.dataset.id); input.value = ''; close(); }));
@@ -1068,6 +1093,12 @@
     const pa = project(a, week, state.scoring), pb = project(b, week, state.scoring);
     if (pa.bye || pb.bye) return `<p class="sub">${esc((pa.bye ? a : b).name)} is on bye in Week ${week}.</p>`;
     const ra = compareRows(a, pa), rb = compareRows(b, pb);
+    const fa = workloadOf(a), fb = workloadOf(b);
+    if (fa || fb) {
+      const cell = f => f ? `<span class="full-work" data-gl="If full workload" title="${esc(workloadNote(f))}">${f1(f.pts)}</span>` : '<span class="na">—</span>';
+      ra.push(['If full workload', cell(fa)]);
+      rb.push(['If full workload', cell(fb)]);
+    }
     const keys = [...new Set(ra.map(r => r[0]).concat(rb.map(r => r[0])))];
     const ga = Object.fromEntries(ra), gb = Object.fromEntries(rb);
     const winner = pa.pts >= pb.pts ? a : b;
