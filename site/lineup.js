@@ -158,57 +158,78 @@
 
   const fmt1 = n => (Math.round(Number(n) * 10) / 10).toFixed(1);
 
-  // One swap sentence. Out / bye / empty sitters count as 0. A swap that does
-  // not add points is omitted so an already-optimal lineup stays empty.
-  function swapLine(move) {
+  // One improving swap. Out / bye / empty sitters count as 0. A swap that
+  // does not add points is omitted so an already-optimal lineup stays empty.
+  function swapParts(move) {
     const start = move && move.start;
     if (!start || start.status !== 'ok' || !(start.proj >= 0)) return null;
     const sit = move.sit || null;
     const sitProj = sit && sit.status === 'ok' ? Number(sit.proj) || 0 : 0;
     const gain = Number(start.proj) - sitProj;
     if (!(gain > 0.05)) return null;
-    if (!sit) return `Start ${start.name} (${fmt1(start.proj)}) in an empty slot, +${fmt1(gain)} pts`;
-    return `Start ${start.name} (${fmt1(start.proj)}) over ${sit.name} (${fmt1(sitProj)}), +${fmt1(gain)} pts`;
+    return {
+      kind: sit ? 'over' : 'empty',
+      startName: start.name,
+      startProj: fmt1(start.proj),
+      sitName: sit ? sit.name : '',
+      sitProj: fmt1(sitProj),
+      gain: fmt1(gain),
+    };
+  }
+
+  function swapLine(move) {
+    const p = swapParts(move);
+    if (!p) return null;
+    if (p.kind === 'empty') return `Start ${p.startName} (${p.startProj}) in an empty slot, +${p.gain} pts`;
+    return `Start ${p.startName} (${p.startProj}) over ${p.sitName} (${p.sitProj}), +${p.gain} pts`;
   }
 
   function swapLines(moves) {
     return (moves || []).map(swapLine).filter(Boolean);
   }
 
-  // Where "Open in Sleeper" sends the user. The web URL is the TEAM tab
-  // (roster / lineup), confirmed in Sleeper's web client as
-  // /leagues/:league/team with selectedTab "TEAM". It is not the league home
-  // (/leagues/:league) and not the matchup tab.
+  function swapMoves(moves) {
+    return (moves || []).map(swapParts).filter(Boolean);
+  }
+
+  // Where "Open in Sleeper" sends the user.
   //
-  // Native schemes, checked 2026-10-21, were not opened inside the iOS or
-  // Android app from this environment:
-  // - sleeper:// is a live iOS scheme. The App Store page's open action is
-  //   sleeper://picks/competition/... so the app accepts a path on that scheme.
-  //   sleeper://leagues/<id>/team mirrors the web TEAM route and is best-effort.
-  // - sleeperbot:// is the scheme Branch still publishes for both
-  //   com.blitzstudios.sleeperbot and com.sleeperbot. Branch's own meta tags
-  //   only put the path "open" on it (sleeperbot://open), which launches the
-  //   app and does not name a team. sleeperbot://leagues/<id>/team is best-effort.
-  // - https://sleeper.com/leagues/<id>/team is not an iOS universal link.
-  //   apple-app-site-association claims only /topics, /channels, /topic, and
-  //   /message, so that URL stays in the browser. That browser page is the
-  //   verified team screen and the fallback.
+  // com.sleeperbot 156.0 (versionCode 4195846), base APK from APKPure on
+  // 2026-10-21, MainActivity intent filters:
+  // - sleeperbot://open only. scheme sleeperbot AND host open. A path whose
+  //   host is "leagues" does not match, and an intent with package=com.sleeperbot
+  //   then opens the Play Store. sleeperbot://open launches the app and does
+  //   not name a team, so it is not the button.
+  // - sleeper:// with no host and no path. Any sleeper:// URI matches, including
+  //   sleeper://leagues/<id>/team. That is the deepest path this filter allows
+  //   that mirrors the web TEAM route. Whether the app's router lands on the
+  //   lineup screen is best-effort: this environment cannot open the native app.
+  // - https on sleeper.com / sleeper.app / sleeper.im / sleeper.dev, autoVerify,
+  //   pathPattern only /topic/.*, /topics/.*, /channels/.*, /message/.*.
+  //   /leagues/<id>/team does not match, so that URL stays in the browser.
+  //   The web client routes it to selectedTab TEAM. Logged out, Sleeper
+  //   redirects to /?redirect=/leagues/<id>/team. That page is the fallback.
+  // iOS was not opened in the installed app. The App Store action
+  // sleeper://picks/competition/... shows the current app accepts a path on
+  // sleeper://, so iOS uses the same team path and falls back to the web page.
   function sleeperTeamLinks(leagueId) {
     const id = String(leagueId || '');
     if (!/^\d{1,20}$/.test(id)) return null;
     const web = `https://sleeper.com/leagues/${id}/team`;
     const path = `leagues/${id}/team`;
+    const fallback = encodeURIComponent(web);
     return {
       web,
       app: `sleeper://${path}`,
-      legacyApp: `sleeperbot://${path}`,
-      androidIntent: `intent://${path}#Intent;scheme=sleeperbot;package=com.sleeperbot;S.browser_fallback_url=${encodeURIComponent(web)};end`,
+      legacyApp: 'sleeperbot://open',
+      // No package= param: that is what sends a non-matching intent to the Play Store.
+      androidIntent: `intent://${path}#Intent;scheme=sleeper;action=android.intent.action.VIEW;category=android.intent.category.DEFAULT;category=android.intent.category.BROWSABLE;S.browser_fallback_url=${fallback};end`,
     };
   }
 
-  // Desktop and non-mobile browsers use the verified web team page.
-  // Android uses the sleeperbot intent so Chrome can fall back to that page
-  // when the app is missing. iOS tries sleeper:// and the caller falls back.
+  // Desktop uses the verified web team page. Android uses the sleeper:// intent,
+  // which matches the installed app's filter, and falls back to that web page.
+  // iOS tries the same sleeper:// path, then the web page.
   function sleeperOpenPlan(links, ua) {
     const agent = String(ua || '');
     if (!links) return null;
@@ -217,5 +238,5 @@
     return { kind: 'web', url: links.web, fallback: links.web };
   }
 
-  return { ELIG, ESPN_SLOT, ESPN_SLOT_ORDER, slotsFromSleeper, slotsFromEspn, isMultiQb, optimize, separateSameTeamQbs, swapLine, swapLines, sleeperTeamLinks, sleeperOpenPlan };
+  return { ELIG, ESPN_SLOT, ESPN_SLOT_ORDER, slotsFromSleeper, slotsFromEspn, isMultiQb, optimize, separateSameTeamQbs, swapLine, swapLines, swapMoves, sleeperTeamLinks, sleeperOpenPlan };
 });
