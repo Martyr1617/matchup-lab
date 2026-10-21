@@ -1,6 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { optimize, isMultiQb, slotsFromSleeper, slotsFromEspn, separateSameTeamQbs } = require('../site/lineup');
+const fs = require('node:fs');
+const path = require('node:path');
+const { optimize, isMultiQb, slotsFromSleeper, slotsFromEspn, separateSameTeamQbs, swapLines, sleeperTeamLinks, sleeperOpenPlan } = require('../site/lineup');
 
 const SF = ['QB', 'RB', 'RB', 'WR', 'WR', 'TE', 'FLEX', 'SUPER_FLEX'];
 const STD = ['QB', 'RB', 'RB', 'WR', 'WR', 'TE', 'FLEX'];
@@ -97,4 +99,62 @@ test('multi-QB detection follows Sleeper and ESPN slot lists', () => {
   assert.equal(isMultiQb(espnSf), true);
   assert.equal(isMultiQb(slotsFromEspn({ 0: 2, 2: 2, 4: 2, 6: 1 })), true);
   assert.equal(isMultiQb(slotsFromEspn({ 0: 1, 2: 2, 4: 2, 6: 1, 23: 1 })), false);
+  assert.deepEqual(slotsFromSleeper(['QB', 'DL', 'LB', 'DB', 'IDP_FLEX', 'BN', 'IR', 'TAXI']), ['QB', 'DL', 'LB', 'DB', 'IDP_FLEX']);
+});
+
+test('IDP slots start defensive players and leave a wide receiver in the skill slot', () => {
+  const wr = p('wr', 'WR', 'DAL', 20);
+  const de = p('de', 'DE', 'DAL', 5);
+  const lb = p('lb', 'LB', 'DAL', 4);
+  const lineup = optimize(['WR', 'DL', 'IDP_FLEX'], [wr, de, lb], null);
+  assert.equal(lineup[0].key, 'wr');
+  assert.equal(lineup[1].key, 'de');
+  assert.equal(lineup[2].key, 'lb');
+});
+
+test('an out or bye player is not started when a healthy player fits the slot', () => {
+  const hurt = p('hurt', 'RB', 'DAL', -1);
+  const bye = p('bye', 'RB', 'NYJ', -1);
+  const healthy = p('healthy', 'RB', 'DAL', 9);
+  const lineup = optimize(['RB', 'FLEX'], [hurt, bye, healthy], null);
+  assert.deepEqual(lineup.map(x => x && x.key), ['healthy', null]);
+});
+
+test('swap lines name the start, the player they replace, and the gain', () => {
+  const lines = swapLines([
+    { start: { name: 'Amon-Ra', proj: 12.34, status: 'ok' }, sit: { name: 'Bench Guy', proj: 8.1, status: 'ok' } },
+    { start: { name: 'Same', proj: 4, status: 'ok' }, sit: { name: 'Other', proj: 4, status: 'ok' } },
+    { start: { name: 'Empty Fill', proj: 9.05, status: 'ok' }, sit: null },
+    { start: { name: 'Handcuff', proj: 6.2, status: 'ok' }, sit: { name: 'Starter', proj: 11, status: 'out' } },
+    { start: null, sit: { name: 'Just Out', proj: 0, status: 'out' } },
+  ]);
+  assert.deepEqual(lines, [
+    'Start Amon-Ra (12.3) over Bench Guy (8.1), +4.2 pts',
+    'Start Empty Fill (9.1) in an empty slot, +9.1 pts',
+    'Start Handcuff (6.2) over Starter (0.0), +6.2 pts',
+  ]);
+});
+
+test('Sleeper links open the team tab, with a best-effort app path and a web fallback', () => {
+  const id = '1049283494438133760';
+  const links = sleeperTeamLinks(id);
+  assert.equal(links.web, `https://sleeper.com/leagues/${id}/team`);
+  assert.equal(links.app, `sleeper://leagues/${id}/team`);
+  assert.equal(links.legacyApp, `sleeperbot://leagues/${id}/team`);
+  assert.match(links.androidIntent, new RegExp(`^intent://leagues/${id}/team#Intent;scheme=sleeperbot;package=com\\.sleeperbot;`));
+  const fb = links.androidIntent.split('browser_fallback_url=')[1].replace(/;end$/, '');
+  assert.equal(decodeURIComponent(fb), links.web);
+  assert.equal(sleeperTeamLinks('not-an-id'), null);
+  assert.equal(sleeperTeamLinks(''), null);
+  assert.deepEqual(sleeperOpenPlan(links, 'Mozilla/5.0'), { kind: 'web', url: links.web, fallback: links.web });
+  assert.equal(sleeperOpenPlan(links, 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)').url, links.app);
+  assert.equal(sleeperOpenPlan(links, 'Mozilla/5.0 (Linux; Android 14)').url, links.androidIntent);
+  const team = fs.readFileSync(path.join(__dirname, '..', 'site', 'team.js'), 'utf8');
+  assert.match(team, /card-title">Optimal lineup/);
+  assert.match(team, /Open in Sleeper/);
+  assert.match(team, /already optimal for Week/);
+  assert.match(team, /Total projected gain/);
+  assert.match(team, /sleeperTeamLinks/);
+  assert.match(team, /swapLines/);
+  assert.doesNotMatch(team, /method:\s*['"](?:POST|PUT|PATCH|DELETE)['"]/);
 });

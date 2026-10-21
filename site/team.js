@@ -10,7 +10,7 @@
   // ---------- Slots ----------
   const LUP = globalThis.MLLineup;
   const ELIG = LUP.ELIG;
-  const SLOT_LABEL = { QB: 'QB', RB: 'RB', WR: 'WR', TE: 'TE', K: 'K', DEF: 'DEF', FLEX: 'FLEX', SUPER_FLEX: 'SFLEX', WRRB_FLEX: 'W/R', REC_FLEX: 'W/T' };
+  const SLOT_LABEL = { QB: 'QB', RB: 'RB', WR: 'WR', TE: 'TE', K: 'K', DEF: 'DEF', FLEX: 'FLEX', SUPER_FLEX: 'SFLEX', WRRB_FLEX: 'W/R', REC_FLEX: 'W/T', DL: 'DL', LB: 'LB', DB: 'DB', DE: 'DE', DT: 'DT', CB: 'CB', S: 'S', IDP: 'IDP', IDP_FLEX: 'IDP' };
   const PRESETS = {
     std: { label: 'Standard: QB, 2 RB, 2 WR, TE, FLEX, K, DEF', slots: ['QB', 'RB', 'RB', 'WR', 'WR', 'TE', 'FLEX', 'K', 'DEF'] },
     wr3: { label: '3 WR: QB, 2 RB, 3 WR, TE, FLEX, K, DEF', slots: ['QB', 'RB', 'RB', 'WR', 'WR', 'WR', 'TE', 'FLEX', 'K', 'DEF'] },
@@ -243,7 +243,6 @@
     return { mean, sd: Math.sqrt(varsum) };
   }
   const normCdf = z => { const t = 1 / (1 + 0.2316419 * Math.abs(z)); const d = 0.3989423 * Math.exp(-z * z / 2); const p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274)))); return z > 0 ? 1 - p : p; };
-  const beatProb = (a, b) => { const sa = a.pr?.dist?.sd || 5, sb = b.pr?.dist?.sd || 5; return normCdf(((a.proj || 0) - (b.proj || 0)) / Math.sqrt(sa * sa + sb * sb)); };
 
   function analyze(league, teamId) {
     const team = league.teams.find(t => t.id === teamId);
@@ -252,10 +251,11 @@
     const week = ML.state.week;
     const roster = team.players.map(p => evalPlayer(p, S, week));
     const opt = optimize(league.slots, roster, team.currentSlots);
-    // Keep current K / DEF picks when not projected (optimizer treats them equally)
+    // Keep current K / DEF / IDP picks when not projected (optimizer treats them equally)
+    const UNPROJECTED = new Set(['K', 'DEF', 'DL', 'LB', 'DB', 'DE', 'DT', 'CB', 'S', 'IDP']);
     if (team.currentSlots) {
       league.slots.forEach((s, i) => {
-        if (s !== 'K' && s !== 'DEF') return;
+        if (!UNPROJECTED.has(s) && s !== 'IDP_FLEX') return;
         const cur = team.currentSlots.filter(c => c.slot === s && c.key).map(c => roster.find(p => p.key === c.key)).filter(Boolean);
         const taken = new Set(opt.filter((x, j) => j !== i && x).map(x => x.key));
         const pick = cur.find(p => !taken.has(p.key) && p.status !== 'out');
@@ -452,14 +452,6 @@
     if (p.status === 'ok') return `<span class="projv">${ML.f1(p.proj)}</span>`;
     return `<span class="sub">${p.status === 'np' ? '—' : '0.0'}</span>`;
   }
-  // Compact side-by-side: Vegas, props, opportunity and one efficiency metric
-  function sideBySide(a, b) {
-    if (!a || !b || a.status !== 'ok' || b.status !== 'ok' || !a.ml || !b.ml || !a.pr || !b.pr || a.pr.bye || b.pr.bye || !ML.compareRows) return '';
-    const ra = ML.compareRows(a.ml, a.pr), rb = Object.fromEntries(ML.compareRows(b.ml, b.pr));
-    const keep = /Implied|Spread|prop|Anytime|WOPR|TPRR|YPRR|Opportunity|Designed run rate|Red-zone|EPA|RYOE|Boom/;
-    const rows = ra.filter(r => keep.test(r[0])).map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${rb[r[0]] ?? '<span class="na">—</span>'}</td></tr>`).join('');
-    return `<details class="mv-cmp"><summary>Side-by-side</summary><table class="cmp-table sm"><thead><tr><th></th><th>${ML.esc(a.name)}</th><th>${ML.esc(b.name)}</th></tr></thead><tbody>${rows}</tbody></table></details>`;
-  }
   function rangeCell(p) { return p && p.status === 'ok' ? `<span class="range"><span class="fl">${ML.f1(p.pr.floor)}</span><span class="rg-sep">–</span><span class="cl">${ML.f1(p.pr.ceil)}</span></span>` : ''; }
 
   function renderResults() {
@@ -469,23 +461,25 @@
     const scoreLbl = L.source === 'manual' ? ML.SCORING[ML.state.scoring].name : scoringLabel(L.S);
     const teamSel = L.teams.length > 1 ? `<label class="field inline"><span>Team</span><select id="teamSel">${L.teams.map(t => `<option value="${ML.esc(t.id)}" ${t.id === T.teamId ? 'selected' : ''}>${ML.esc(t.name)}${t.owner ? ' · ' + ML.esc(t.owner) : ''}</option>`).join('')}</select></label>` : '';
     const gain = A.curStats ? A.optStats.mean - A.curStats.mean : null;
+    const swapText = A.current ? LUP.swapLines(A.moves) : [];
 
     const kpis = `
       <div class="kpis">
         <div class="kpi"><div class="k">Optimal lineup</div><div class="v">${ML.f1(A.optStats.mean)}</div><div class="s">projected pts · Week ${week}</div></div>
         ${A.curStats ? `<div class="kpi"><div class="k">Current lineup</div><div class="v">${ML.f1(A.curStats.mean)}</div><div class="s">as set in ${L.source === 'sleeper' ? 'Sleeper' : 'ESPN'}</div></div>
-        <div class="kpi ${gain > 0.05 ? 'up' : ''}"><div class="k">Gain from changes</div><div class="v">${gain > 0.05 ? '+' + ML.f1(gain) : '0.0'}</div><div class="s">${A.moves.length ? A.moves.length + ' move' + (A.moves.length > 1 ? 's' : '') + ' suggested' : 'Lineup already optimal'}</div></div>` : ''}
+        <div class="kpi ${gain > 0.05 ? 'up' : ''}"><div class="k">Gain from changes</div><div class="v">${gain > 0.05 ? '+' + ML.f1(gain) : '0.0'}</div><div class="s">${swapText.length ? swapText.length + ' swap' + (swapText.length > 1 ? 's' : '') + ' suggested' : 'Lineup already optimal'}</div></div>` : ''}
         ${A.opp ? `<div class="kpi"><div class="k">Win probability</div><div class="v">${ML.pct(A.opp.win)}</div><div class="s">vs ${ML.esc(A.opp.team.name)} (${ML.f1(A.opp.stats.mean)})</div></div>` : ''}
       </div>`;
 
+    const sleeperLinks = L.source === 'sleeper' ? LUP.sleeperTeamLinks(L.id) : null;
+    const sleeperBtn = sleeperLinks ? `<a class="sleeper-open" id="openSleeper" href="${ML.esc(sleeperLinks.web)}" data-app="${ML.esc(sleeperLinks.app)}" data-legacy="${ML.esc(sleeperLinks.legacyApp)}" data-intent="${ML.esc(sleeperLinks.androidIntent)}" target="_blank" rel="noopener"><img src="sleeper-mark.png" alt="" width="28" height="28" /><span>Open in Sleeper</span></a>` : '';
     const movesCard = A.current ? `
-      <div class="card">
-        <div class="card-title">Recommended moves</div>
-        ${A.moves.length ? `<div class="moves">${A.moves.map(m => {
-          if (m.start && m.sit) { const bp = m.sit.status === 'ok' ? beatProb(m.start, m.sit) : 1; return `<div class="move"><div><span class="mv in">Start</span> <b>${ML.esc(m.start.name)}</b> <span class="sub">${ML.f1(m.start.proj)}</span></div><div><span class="mv out">Bench</span> <b>${ML.esc(m.sit.name)}</b> <span class="sub">${m.sit.status === 'ok' ? ML.f1(m.sit.proj) : ML.esc(m.sit.note)}</span></div><div class="mv-why">${m.sit.status === 'ok' ? `+${ML.f1(m.start.proj - m.sit.proj)} pts · outscores him ${ML.pct(bp)} of the time` : `${ML.esc(m.sit.name)} ${m.sit.status === 'bye' ? 'is on a bye this week' : m.sit.status === 'out' ? 'is listed ' + ML.esc(m.sit.note) : 'has no projection'}`}</div>${sideBySide(m.start, m.sit)}</div>`; }
-          if (m.start) return `<div class="move"><div><span class="mv in">Start</span> <b>${ML.esc(m.start.name)}</b> <span class="sub">${ML.f1(m.start.proj)}</span></div><div></div><div class="mv-why">Fills an empty starting slot</div></div>`;
-          return `<div class="move"><div><span class="mv out">Bench</span> <b>${ML.esc(m.sit.name)}</b> <span class="sub">${ML.esc(m.sit.note || '')}</span></div><div></div><div class="mv-why">No better eligible replacement on your bench; consider the waiver targets below</div></div>`;
-        }).join('')}</div>` : `<p class="sub">Your current lineup already matches the optimal lineup for Week ${week}.</p>`}
+      <div class="card" id="optimal-lineup">
+        <div class="optimal-head">
+          <div class="card-title">Optimal lineup</div>
+          ${sleeperBtn}
+        </div>
+        ${swapText.length ? `<ul class="swap-list">${swapText.map(line => `<li>${ML.esc(line)}</li>`).join('')}</ul>${gain > 0.05 ? `<p class="swap-total">Total projected gain: +${ML.f1(gain)} pts</p>` : ''}` : `<p class="sub">Your lineup is already optimal for Week ${week}. No swap raises the projection.</p>`}
       </div>` : '';
 
     const curKeys = new Set((A.current || []).filter(c => c.p).map(c => c.p.key));
@@ -605,6 +599,29 @@
     const ts = $('#teamSel', el); if (ts) ts.addEventListener('change', () => { T.teamId = ts.value; setHash(); render(); });
     const cl = $('#changeLeague', el); if (cl) cl.addEventListener('click', () => { T.showConnect = !T.showConnect; render(); });
     $$('[data-ml]', el).forEach(n => n.addEventListener('click', () => ML.openPlayer(n.dataset.ml)));
+    const open = $('#openSleeper', el);
+    if (open) open.addEventListener('click', e => openSleeperTeam(e, open));
+  }
+
+  // Mobile tries the installed app on the team path, then the web team page.
+  // Desktop follows the link, which is already the web team page.
+  function openSleeperTeam(e, a) {
+    const links = {
+      web: a.getAttribute('href'),
+      app: a.dataset.app,
+      legacyApp: a.dataset.legacy,
+      androidIntent: a.dataset.intent,
+    };
+    const plan = LUP.sleeperOpenPlan(links, navigator.userAgent || '');
+    if (!plan || plan.kind === 'web') return;
+    e.preventDefault();
+    if (plan.kind === 'intent') { window.location.href = plan.url; return; }
+    const start = Date.now();
+    window.location.href = plan.url;
+    setTimeout(() => {
+      if (document.visibilityState === 'hidden') return;
+      if (Date.now() - start < 2000) window.location.href = plan.fallback;
+    }, 900);
   }
 
   async function loadSleeper(lid, teamId) {

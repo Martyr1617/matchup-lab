@@ -10,7 +10,13 @@
   const ELIG = {
     QB: ['QB'], RB: ['RB'], WR: ['WR'], TE: ['TE'], K: ['K'], DEF: ['DEF'],
     FLEX: ['RB', 'WR', 'TE'], SUPER_FLEX: ['QB', 'RB', 'WR', 'TE'], WRRB_FLEX: ['RB', 'WR'], REC_FLEX: ['WR', 'TE'],
+    // Sleeper IDP slots. A DL slot also accepts DE/DT, a DB slot accepts CB/S.
+    DL: ['DL', 'DE', 'DT'], LB: ['LB'], DB: ['DB', 'CB', 'S'],
+    DE: ['DE', 'DL'], DT: ['DT', 'DL'], CB: ['CB', 'DB'], S: ['S', 'DB'],
+    IDP: ['DL', 'LB', 'DB', 'DE', 'DT', 'CB', 'S'],
+    IDP_FLEX: ['DL', 'LB', 'DB', 'DE', 'DT', 'CB', 'S'],
   };
+  const POOL_POS = new Set([].concat(...Object.values(ELIG)));
   const ESPN_SLOT = { 0: 'QB', 2: 'RB', 3: 'WRRB_FLEX', 4: 'WR', 5: 'REC_FLEX', 6: 'TE', 23: 'FLEX', 7: 'SUPER_FLEX', 17: 'K', 16: 'DEF' };
   const ESPN_SLOT_ORDER = [0, 2, 4, 6, 3, 5, 23, 7, 17, 16];
 
@@ -133,7 +139,7 @@
         }
       }
     }
-    const pool = roster.filter(p => !used.has(p.key) && !(p.locked && !curKeys.has(p.key)) && ELIG.FLEX.concat(['QB', 'K', 'DEF']).includes(p.pos));
+    const pool = roster.filter(p => !used.has(p.key) && !(p.locked && !curKeys.has(p.key)) && POOL_POS.has(p.pos));
     const openIdx = slots.map((s, i) => i).filter(i => fixed[i] === null);
     const BIG = 1e6;
     const assignment = fixed.slice();
@@ -150,5 +156,66 @@
     return separateSameTeamQbs(slots, assignment, roster, curKeys);
   }
 
-  return { ELIG, ESPN_SLOT, ESPN_SLOT_ORDER, slotsFromSleeper, slotsFromEspn, isMultiQb, optimize, separateSameTeamQbs };
+  const fmt1 = n => (Math.round(Number(n) * 10) / 10).toFixed(1);
+
+  // One swap sentence. Out / bye / empty sitters count as 0. A swap that does
+  // not add points is omitted so an already-optimal lineup stays empty.
+  function swapLine(move) {
+    const start = move && move.start;
+    if (!start || start.status !== 'ok' || !(start.proj >= 0)) return null;
+    const sit = move.sit || null;
+    const sitProj = sit && sit.status === 'ok' ? Number(sit.proj) || 0 : 0;
+    const gain = Number(start.proj) - sitProj;
+    if (!(gain > 0.05)) return null;
+    if (!sit) return `Start ${start.name} (${fmt1(start.proj)}) in an empty slot, +${fmt1(gain)} pts`;
+    return `Start ${start.name} (${fmt1(start.proj)}) over ${sit.name} (${fmt1(sitProj)}), +${fmt1(gain)} pts`;
+  }
+
+  function swapLines(moves) {
+    return (moves || []).map(swapLine).filter(Boolean);
+  }
+
+  // Where "Open in Sleeper" sends the user. The web URL is the TEAM tab
+  // (roster / lineup), confirmed in Sleeper's web client as
+  // /leagues/:league/team with selectedTab "TEAM". It is not the league home
+  // (/leagues/:league) and not the matchup tab.
+  //
+  // Native schemes, checked 2026-10-21, were not opened inside the iOS or
+  // Android app from this environment:
+  // - sleeper:// is a live iOS scheme. The App Store page's open action is
+  //   sleeper://picks/competition/... so the app accepts a path on that scheme.
+  //   sleeper://leagues/<id>/team mirrors the web TEAM route and is best-effort.
+  // - sleeperbot:// is the scheme Branch still publishes for both
+  //   com.blitzstudios.sleeperbot and com.sleeperbot. Branch's own meta tags
+  //   only put the path "open" on it (sleeperbot://open), which launches the
+  //   app and does not name a team. sleeperbot://leagues/<id>/team is best-effort.
+  // - https://sleeper.com/leagues/<id>/team is not an iOS universal link.
+  //   apple-app-site-association claims only /topics, /channels, /topic, and
+  //   /message, so that URL stays in the browser. That browser page is the
+  //   verified team screen and the fallback.
+  function sleeperTeamLinks(leagueId) {
+    const id = String(leagueId || '');
+    if (!/^\d{1,20}$/.test(id)) return null;
+    const web = `https://sleeper.com/leagues/${id}/team`;
+    const path = `leagues/${id}/team`;
+    return {
+      web,
+      app: `sleeper://${path}`,
+      legacyApp: `sleeperbot://${path}`,
+      androidIntent: `intent://${path}#Intent;scheme=sleeperbot;package=com.sleeperbot;S.browser_fallback_url=${encodeURIComponent(web)};end`,
+    };
+  }
+
+  // Desktop and non-mobile browsers use the verified web team page.
+  // Android uses the sleeperbot intent so Chrome can fall back to that page
+  // when the app is missing. iOS tries sleeper:// and the caller falls back.
+  function sleeperOpenPlan(links, ua) {
+    const agent = String(ua || '');
+    if (!links) return null;
+    if (/Android/i.test(agent)) return { kind: 'intent', url: links.androidIntent, fallback: links.web };
+    if (/iPhone|iPad|iPod/i.test(agent)) return { kind: 'app', url: links.app, fallback: links.web };
+    return { kind: 'web', url: links.web, fallback: links.web };
+  }
+
+  return { ELIG, ESPN_SLOT, ESPN_SLOT_ORDER, slotsFromSleeper, slotsFromEspn, isMultiQb, optimize, separateSameTeamQbs, swapLine, swapLines, sleeperTeamLinks, sleeperOpenPlan };
 });
