@@ -320,7 +320,11 @@
       const scoring = S.rec >= 0.99 ? 'ppr' : S.rec >= 0.49 ? 'half' : 'std';
       const qbMode = LUP.isMultiQb(league.slots) ? 'sflex' : 'qb1';
       const perPos = {};
-      waivers = globalThis.MLWaiver.advise({ roster, opt, slots: league.slots, freeAgents: free, scoring, qbMode })
+      const data = (globalThis.ML && ML.state && ML.state.data) || {};
+      waivers = globalThis.MLWaiver.advise({
+        roster, opt, slots: league.slots, freeAgents: free, scoring, qbMode,
+        players: data.players || [], roles: data.roles, week,
+      })
         .filter(c => (perPos[c.e.pos] = (perPos[c.e.pos] || 0) + 1) <= 2)
         .slice(0, 6);
     }
@@ -513,7 +517,7 @@
     const waiverCard = A.waivers ? `
       <div class="card flush">
         <div class="card-title pad">Waiver wire targets</div>
-        ${A.waivers.length ? `<div class="tscroll"><table class="team-table"><thead><tr><th>Available player</th><th class="c-mu">Matchup</th><th class="num">Proj</th><th>Suggested drop</th></tr></thead><tbody>${A.waivers.map(w => `<tr><td>${playerCell(w.e)}</td><td class="c-mu">${matchupCell(w.e)}</td><td class="num">${projCell(w.e)}</td><td class="drop-cell"><span class="grade good">+${ML.f1(w.gain)}</span> <span class="drop-why">${ML.esc(w.reason)}</span>${w.altReasons && w.altReasons.length ? `<div class="sub">${w.altReasons.map(r => ML.esc(r)).join('<br>')}</div>` : ''}</td></tr>`).join('')}</tbody></table></div>` : `<p class="sub pad">No available player is worth more than the most expendable player you can drop.</p>`}
+        ${A.waivers.length ? `<div class="tscroll"><table class="team-table"><thead><tr><th>Available player</th><th class="c-mu">Matchup</th><th class="num">Proj</th><th>Suggested drop</th></tr></thead><tbody>${A.waivers.map(w => `<tr><td>${playerCell(w.e)}${w.why ? `<div class="sub waiver-why">${ML.esc(w.why)}</div>` : ''}</td><td class="c-mu">${matchupCell(w.e)}</td><td class="num">${projCell(w.e)}</td><td class="drop-cell"><span class="grade good">+${ML.f1(w.gain)}</span> <span class="drop-why">${ML.esc(w.reason)}</span>${w.altReasons && w.altReasons.length ? `<div class="sub">${w.altReasons.map(r => ML.esc(r)).join('<br>')}</div>` : ''}</td></tr>`).join('')}</tbody></table></div>` : `<p class="sub pad">No available player is worth more than the most expendable player you can drop.</p>`}
       </div>` : '';
 
     const notes = [];

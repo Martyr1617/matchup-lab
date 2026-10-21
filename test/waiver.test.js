@@ -217,12 +217,92 @@ test('two alternatives are offered and a lesser add is left off', () => {
   assert.equal(rows[0].altReasons.length, 2);
 });
 
+test('opportunity outranks a higher trade value, and the drop stays the cheapest player', () => {
+  const { advise } = require('../site/waiver');
+  const roster = baseRoster().concat([
+    guy('Bench RB', 'RB', 0.2, 0.1),
+    guy('Bench WR', 'WR', 0.4, 0.2),
+  ]);
+  const opt = roster.slice(0, 7);
+  const team = [
+    { id: 'workhorse', team: 'NYJ', pos: 'RB', log: [{ wk: 6, ca: 18, tg: 1, ppr: 14, sp: 0.72 }] },
+    { id: 'volume', team: 'NYJ', pos: 'RB', name: 'Volume Back', log: [
+      { wk: 4, ca: 8, tg: 2, ppr: 7, sp: 0.4 },
+      { wk: 5, ca: 10, tg: 2, ppr: 8, sp: 0.48 },
+      { wk: 6, ca: 12, tg: 3, ppr: 9, sp: 0.55 },
+    ] },
+    { id: 'quiet', team: 'NYJ', pos: 'RB', name: 'Quiet Back', log: [
+      { wk: 6, ca: 1, tg: 0, ppr: 6, sp: 0.08 },
+    ] },
+    { id: 'fluke', team: 'NYJ', pos: 'RB', name: 'Fluke Back', log: [
+      { wk: 5, ca: 2, tg: 1, ppr: 3, sp: 0.2 },
+      { wk: 6, ca: 1, tg: 2, ppr: 14, rtd: 2, sp: 0.22 },
+    ] },
+  ];
+  const volume = add('Volume Back', 'RB', 3, 1);
+  volume.ml = team[1];
+  const quiet = add('Quiet Back', 'RB', 9, 2);
+  quiet.ml = team[2];
+  const fluke = add('Fluke Back', 'RB', 5, 1);
+  fluke.ml = team[3];
+  const rows = advise({
+    roster, opt, slots: STD, freeAgents: [quiet, volume, fluke], scoring: 'ppr', qbMode: 'qb1',
+    players: team,
+  });
+  assert.equal(rows[0].e.name, 'Volume Back');
+  assert.equal(rows[0].drop.name, 'Bench RB');
+  assert.match(rows[0].why, /Carries share/);
+  assert.ok(rows[0].score > rows.find(r => r.e.name === 'Quiet Back').score);
+  const flukeRow = rows.find(r => r.e.name === 'Fluke Back');
+  assert.match(flukeRow.why, /TD-fluke warning/);
+  assert.ok(flukeRow.score < rows.find(r => r.e.name === 'Volume Back').score);
+});
+
+test('a handcuff and a rising rookie get the backtested reasons', () => {
+  const starter = { id: 'starter', team: 'PIT', pos: 'WR', log: [{ wk: 4, tg: 8, ca: 0, ppr: 12, sp: 0.8 }] };
+  const cuff = {
+    id: 'cuff', team: 'PIT', pos: 'WR', name: 'Cuff',
+    log: [{ wk: 6, tg: 9, ca: 0, ppr: 16, sp: 0.65 }],
+  };
+  const rookie = {
+    id: 'rook', team: 'NO', pos: 'WR', name: 'Rook', rookie: 1,
+    adv: { tgt_share: 0.12, ay_share: 0.1 },
+    log: [
+      { wk: 4, tg: 3, ca: 0, ppr: 4, sp: 0.30 },
+      { wk: 5, tg: 4, ca: 0, ppr: 6, sp: 0.45 },
+      { wk: 6, tg: 5, ca: 0, ppr: 7, sp: 0.62 },
+    ],
+  };
+  const filler = {
+    id: 'fill', team: 'NO', pos: 'WR', name: 'Fill',
+    adv: { tgt_share: 0.04, ay_share: 0.02 },
+    log: [{ wk: 6, tg: 1, ca: 0, ppr: 2, sp: 0.2 }],
+  };
+  const roster = baseRoster().concat([guy('Bench RB', 'RB', 0.2, 0.1)]);
+  const opt = roster.slice(0, 7);
+  const a = add('Cuff', 'WR', 4, 1); a.ml = cuff;
+  const b = add('Rook', 'WR', 4, 1); b.ml = rookie;
+  const c = add('Fill', 'WR', 4, 1); c.ml = filler;
+  const rows = advise({
+    roster, opt, slots: STD, freeAgents: [a, b, c], scoring: 'ppr', qbMode: 'qb1',
+    players: [starter, cuff, rookie, filler, { id: 'pit-other', team: 'PIT', pos: 'WR', log: [{ wk: 6, tg: 10, ca: 0 }] }],
+    roles: { 7: { out: ['starter'], chart: { PIT: { WR: ['starter', 'cuff'] } } } },
+    week: 7,
+  });
+  const cuffRow = rows.find(r => r.e.name === 'Cuff');
+  const rookRow = rows.find(r => r.e.name === 'Rook');
+  assert.match(cuffRow.why, /Starter out, inherits ~65% snaps/);
+  assert.match(rookRow.why, /Rookie routes up 3 straight weeks/);
+  assert.equal(cuffRow.drop.name, 'Bench RB');
+});
+
 test('the team view asks for expendable drops instead of a same-position swap', () => {
   const team = fs.readFileSync(path.join(__dirname, '..', 'site', 'team.js'), 'utf8');
   const html = fs.readFileSync(path.join(__dirname, '..', 'site', 'index.html'), 'utf8');
   assert.match(team, /MLWaiver\.advise/);
   assert.match(team, /Suggested drop/);
   assert.match(team, /w\.reason/);
+  assert.match(team, /w\.why/);
   assert.match(team, /w\.altReasons/);
   assert.doesNotMatch(team, /Upgrade over/);
   assert.doesNotMatch(team, /weakest eligible starter/);

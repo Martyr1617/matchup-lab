@@ -454,7 +454,8 @@ def main():
         gs = sp_.get('gsis_id')
         if gs and isinstance(gs, str) and gs.strip():
             ids_by_gsis[gs.strip()] = {'sl': sid, 'espn': sp_.get('espn_id'), 'yahoo': sp_.get('yahoo_id'),
-                                        'inj': sp_.get('injury_status'), 'injb': sp_.get('injury_body_part')}
+                                        'inj': sp_.get('injury_status'), 'injb': sp_.get('injury_body_part'),
+                                        'exp': sp_.get('years_exp')}
     pfr_to_gsis = {}
     try:
         dbi = pd.read_csv(D + 'db_playerids.csv', dtype=str)
@@ -477,6 +478,8 @@ def main():
         e = ids_by_gsis.get(pl['id'], {})
         pl['ids'] = {'sl': _s(e.get('sl')), 'espn': _s(e.get('espn')), 'yahoo': _s(e.get('yahoo'))}
         if e.get('inj'): pl['sl_inj'] = {'status': e.get('inj'), 'body': e.get('injb')}
+        # years_exp 0 is a rookie. Missing experience is left unset.
+        if e.get('exp') == 0 or e.get('exp') == '0': pl['rookie'] = 1
     # Fill a missing Sleeper id from the ESPN id already on the crosswalk.
     # Matching on the display name collides when two players share it.
     by_espn = {}
