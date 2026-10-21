@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { optimize, isMultiQb, slotsFromSleeper, slotsFromEspn, separateSameTeamQbs, swapLines, sleeperTeamLinks, sleeperOpenPlan } = require('../site/lineup');
+const { optimize, isMultiQb, slotsFromSleeper, slotsFromEspn, separateSameTeamQbs, swapLines, swapMoves, sleeperTeamLinks, sleeperOpenPlan } = require('../site/lineup');
 
 const SF = ['QB', 'RB', 'RB', 'WR', 'WR', 'TE', 'FLEX', 'SUPER_FLEX'];
 const STD = ['QB', 'RB', 'RB', 'WR', 'WR', 'TE', 'FLEX'];
@@ -135,13 +135,27 @@ test('swap lines name the start, the player they replace, and the gain', () => {
   ]);
 });
 
+test('swap rows keep the start and the player they replace separate', () => {
+  const rows = swapMoves([
+    { start: { name: 'Amon-Ra', proj: 12.34, status: 'ok' }, sit: { name: 'Bench Guy', proj: 8.1, status: 'ok' } },
+    { start: { name: 'Empty Fill', proj: 9.05, status: 'ok' }, sit: null },
+  ]);
+  assert.equal(rows[0].kind, 'over');
+  assert.equal(rows[0].startName, 'Amon-Ra');
+  assert.equal(rows[0].sitName, 'Bench Guy');
+  assert.equal(rows[1].kind, 'empty');
+});
+
 test('Sleeper links open the team tab, with a best-effort app path and a web fallback', () => {
   const id = '1049283494438133760';
   const links = sleeperTeamLinks(id);
   assert.equal(links.web, `https://sleeper.com/leagues/${id}/team`);
   assert.equal(links.app, `sleeper://leagues/${id}/team`);
-  assert.equal(links.legacyApp, `sleeperbot://leagues/${id}/team`);
-  assert.match(links.androidIntent, new RegExp(`^intent://leagues/${id}/team#Intent;scheme=sleeperbot;package=com\\.sleeperbot;`));
+  assert.equal(links.legacyApp, 'sleeperbot://open');
+  assert.match(links.androidIntent, new RegExp(`^intent://leagues/${id}/team#Intent;scheme=sleeper;`));
+  assert.match(links.androidIntent, /category=android\.intent\.category\.BROWSABLE/);
+  assert.doesNotMatch(links.androidIntent, /package=/);
+  assert.doesNotMatch(links.androidIntent, /scheme=sleeperbot/);
   const fb = links.androidIntent.split('browser_fallback_url=')[1].replace(/;end$/, '');
   assert.equal(decodeURIComponent(fb), links.web);
   assert.equal(sleeperTeamLinks('not-an-id'), null);
@@ -150,11 +164,16 @@ test('Sleeper links open the team tab, with a best-effort app path and a web fal
   assert.equal(sleeperOpenPlan(links, 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)').url, links.app);
   assert.equal(sleeperOpenPlan(links, 'Mozilla/5.0 (Linux; Android 14)').url, links.androidIntent);
   const team = fs.readFileSync(path.join(__dirname, '..', 'site', 'team.js'), 'utf8');
+  const css = fs.readFileSync(path.join(__dirname, '..', 'site', 'styles.css'), 'utf8');
   assert.match(team, /card-title">Optimal lineup/);
   assert.match(team, /Open in Sleeper/);
   assert.match(team, /already optimal for Week/);
   assert.match(team, /Total projected gain/);
   assert.match(team, /sleeperTeamLinks/);
-  assert.match(team, /swapLines/);
+  assert.match(team, /swapMoves/);
+  assert.match(team, /class="mv in">Start/);
+  assert.match(team, /class="mv out">Bench/);
+  assert.match(css, /#optimal-lineup \.mv\.in \{ background: #14532d; color: #d8ffe4; \}/);
+  assert.match(css, /#optimal-lineup \.mv\.out \{ background: #5c1a1a; color: #ffd0d0; \}/);
   assert.doesNotMatch(team, /method:\s*['"](?:POST|PUT|PATCH|DELETE)['"]/);
 });

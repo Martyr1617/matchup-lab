@@ -471,8 +471,15 @@ tbody tr:last-child td { border-bottom: 0; }
 .kpi .s { font-size: var(--text-xs); color: var(--color-text-muted); }
 .optimal-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
 .optimal-head .card-title { margin-bottom: 0; }
-.swap-list { margin: var(--space-3) 0 0; padding-left: 1.15em; display: grid; gap: var(--space-2); font-size: var(--text-sm); }
 .swap-total { margin: var(--space-3) 0 0; font-weight: 700; font-variant-numeric: tabular-nums; }
+/* Start/sit chips stay green and red on every team theme. Theme tokens
+   recolor --color-good and --color-bad, so these values are literal. */
+#optimal-lineup .moves { margin-top: var(--space-3); }
+#optimal-lineup .mv.in { background: #14532d; color: #d8ffe4; }
+#optimal-lineup .mv.out { background: #5c1a1a; color: #ffd0d0; }
+#optimal-lineup .swap-in b { color: #d8ffe4; }
+#optimal-lineup .swap-out b { color: #ffd0d0; }
+#optimal-lineup .swap-proj { color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
 /* Sleeper's own mark on a fixed navy/teal chip. Team themes restyle links
    through --color-link, so these colors stay literal. The mark is the
    public mascot file Sleeper serves at

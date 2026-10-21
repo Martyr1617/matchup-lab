@@ -453,6 +453,13 @@
     return `<span class="sub">${p.status === 'np' ? '—' : '0.0'}</span>`;
   }
   function rangeCell(p) { return p && p.status === 'ok' ? `<span class="range"><span class="fl">${ML.f1(p.pr.floor)}</span><span class="rg-sep">–</span><span class="cl">${ML.f1(p.pr.ceil)}</span></span>` : ''; }
+  function swapRow(p) {
+    const inn = `<div class="swap-in"><span class="mv in">Start</span> <b>${ML.esc(p.startName)}</b> <span class="swap-proj">(${ML.esc(p.startProj)})</span></div>`;
+    const out = p.kind === 'empty'
+      ? `<div class="swap-out"><span class="mv out">Empty</span> <b>open slot</b></div>`
+      : `<div class="swap-out"><span class="mv out">Bench</span> <b>${ML.esc(p.sitName)}</b> <span class="swap-proj">(${ML.esc(p.sitProj)})</span></div>`;
+    return `<div class="move">${inn}${out}<div class="mv-why">+${ML.esc(p.gain)} pts</div></div>`;
+  }
 
   function renderResults() {
     const L = T.league; const A = analyze(L, T.teamId);
@@ -461,13 +468,13 @@
     const scoreLbl = L.source === 'manual' ? ML.SCORING[ML.state.scoring].name : scoringLabel(L.S);
     const teamSel = L.teams.length > 1 ? `<label class="field inline"><span>Team</span><select id="teamSel">${L.teams.map(t => `<option value="${ML.esc(t.id)}" ${t.id === T.teamId ? 'selected' : ''}>${ML.esc(t.name)}${t.owner ? ' · ' + ML.esc(t.owner) : ''}</option>`).join('')}</select></label>` : '';
     const gain = A.curStats ? A.optStats.mean - A.curStats.mean : null;
-    const swapText = A.current ? LUP.swapLines(A.moves) : [];
+    const swaps = A.current ? LUP.swapMoves(A.moves) : [];
 
     const kpis = `
       <div class="kpis">
         <div class="kpi"><div class="k">Optimal lineup</div><div class="v">${ML.f1(A.optStats.mean)}</div><div class="s">projected pts · Week ${week}</div></div>
         ${A.curStats ? `<div class="kpi"><div class="k">Current lineup</div><div class="v">${ML.f1(A.curStats.mean)}</div><div class="s">as set in ${L.source === 'sleeper' ? 'Sleeper' : 'ESPN'}</div></div>
-        <div class="kpi ${gain > 0.05 ? 'up' : ''}"><div class="k">Gain from changes</div><div class="v">${gain > 0.05 ? '+' + ML.f1(gain) : '0.0'}</div><div class="s">${swapText.length ? swapText.length + ' swap' + (swapText.length > 1 ? 's' : '') + ' suggested' : 'Lineup already optimal'}</div></div>` : ''}
+        <div class="kpi ${gain > 0.05 ? 'up' : ''}"><div class="k">Gain from changes</div><div class="v">${gain > 0.05 ? '+' + ML.f1(gain) : '0.0'}</div><div class="s">${swaps.length ? swaps.length + ' swap' + (swaps.length > 1 ? 's' : '') + ' suggested' : 'Lineup already optimal'}</div></div>` : ''}
         ${A.opp ? `<div class="kpi"><div class="k">Win probability</div><div class="v">${ML.pct(A.opp.win)}</div><div class="s">vs ${ML.esc(A.opp.team.name)} (${ML.f1(A.opp.stats.mean)})</div></div>` : ''}
       </div>`;
 
@@ -479,7 +486,7 @@
           <div class="card-title">Optimal lineup</div>
           ${sleeperBtn}
         </div>
-        ${swapText.length ? `<ul class="swap-list">${swapText.map(line => `<li>${ML.esc(line)}</li>`).join('')}</ul>${gain > 0.05 ? `<p class="swap-total">Total projected gain: +${ML.f1(gain)} pts</p>` : ''}` : `<p class="sub">Your lineup is already optimal for Week ${week}. No swap raises the projection.</p>`}
+        ${swaps.length ? `<div class="moves">${swaps.map(swapRow).join('')}</div>${gain > 0.05 ? `<p class="swap-total">Total projected gain: +${ML.f1(gain)} pts</p>` : ''}` : `<p class="sub">Your lineup is already optimal for Week ${week}. No swap raises the projection.</p>`}
       </div>` : '';
 
     const curKeys = new Set((A.current || []).filter(c => c.p).map(c => c.p.key));
