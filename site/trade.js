@@ -26,9 +26,17 @@
      The first game back from IR, or from a layoff of two games or more,
      counts at 0.90. There is no second discount on top of that.
      A long-term injury (ACL, Achilles, season-ending) plays no games, so
-     redraft value is near zero before ADP. Dynasty keeps the healthy
-     outlook and discounts it by 7 percent. A short absence shaves only
+     redraft value is near zero before ADP, unless a current report says he
+     is practicing in full or limited and trending up, or a headline names a
+     return in the next two weeks. That report overrides a stale IR, PUP, or
+     out tag. A full week of practice is a one-game discount. Limited and
+     improving is two games. "Out for the season" or a return date next year
+     still plays no games. Dynasty keeps the healthy outlook and discounts a
+     true season-ending injury by 7 percent. A short absence shaves only
      15 percent of the redraft haircut off dynasty.
+     A returning player whose healthy rate is a starter rate, and who has no
+     teammate with a 10-point prior season or a 14-point current pace, keeps
+     that healthy rest-of-season rate. A fill-in workload does not take it.
      A vague injury blurb does not change the timeline.
 
    Hurt players, and anyone with no current-week projection, use a healthy
@@ -440,12 +448,59 @@
     return 1 - DYNASTY_SHORT * (1 - (share || 0));
   }
 
-  function parseNews(text) {
+  const SEASON_OUTLOOK = /out for the (rest of the )?season|miss(?:ing)? the rest of (?:the )?season|season-ending|season ending|ruled out for the (?:year|season)|not coming back|won'?t return this season/;
+
+  function foldName(text) {
+    return String(text || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/[.'’`-]/g, ' ').replace(/\b(jr|sr|ii|iii|iv|v)\b/g, ' ')
+      .replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+
+  // A roundup that names several players only counts when the phrase sits
+  // next to this player's name. A headline with no name still counts.
+  function phraseNear(text, name, re) {
+    const s = String(text || '').toLowerCase();
+    if (!re.test(s)) return false;
+    const folded = foldName(name);
+    if (!folded) return true;
+    const last = folded.split(' ').filter(w => w.length > 2).pop() || '';
+    const needles = last && last !== folded ? [folded, last] : [folded];
+    const spots = [];
+    for (const needle of needles) {
+      let from = 0;
+      while (from < s.length) {
+        const at = s.indexOf(needle, from);
+        if (at < 0) break;
+        spots.push(at);
+        from = at + needle.length;
+      }
+    }
+    if (!spots.length) return false;
+    for (const at of spots) {
+      if (re.test(s.slice(Math.max(0, at - 80), at + folded.length + 220))) return true;
+    }
+    return false;
+  }
+
+  function practiceLevel(text) {
+    const s = String(text || '').toLowerCase();
+    if (!s) return '';
+    if (/full participant|full participation|practiced in full|practiced full|full practice/.test(s)) return 'full';
+    if (/limited participant|limited participation|limited practice/.test(s)) return 'limited';
+    if (/did not participate|did not practice|\bdnp\b/.test(s)) return 'dnp';
+    return '';
+  }
+
+  function trendingText(text) {
+    return /designated to return|practice window|upgraded to limited|trending up|increased practice/.test(String(text || '').toLowerCase());
+  }
+
+  function parseNews(text, name) {
     const s = String(text || '').toLowerCase();
     const out = {};
     if (!s) return out;
-    if (/out for the (rest of the )?season|season-ending|season ending|torn acl|achilles/.test(s)) out.long = true;
-    let m = s.match(/(?:return(?:s|ing)?|back|targeting|target(?:ing)?|debut)\D{0,30}week\s*(\d{1,2})/);
+    if (phraseNear(s, name, SEASON_OUTLOOK)) out.long = true;
+    let m = s.match(/(?:return(?:s|ing)?|back|targeting|target(?:ing)?|debut)\D{0,60}week\s*(\d{1,2})/);
     if (!m) m = s.match(/week\s*(\d{1,2})\D{0,30}(?:return|back|debut)/);
     if (m) {
       const wk = Number(m[1]);
@@ -457,7 +512,12 @@
       const one = s.match(/(\d{1,2})\s*weeks?/);
       if (one && /out|miss|sideline|return/.test(s)) out.missWeeks = Number(one[1]);
     }
-    if (/returning to practice|returned to practice|return to practice|practicing again|full participant/.test(s)) out.practicing = true;
+    if (phraseNear(s, name, /full participant|full participation|practiced in full|practiced full|full practice/)) {
+      out.practicing = true;
+      out.full = true;
+    } else if (phraseNear(s, name, /returning to practice|returned to practice|return to practice|practicing again/)) out.practicing = true;
+    if (phraseNear(s, name, /limited participant|limited participation|limited practice/)) out.limited = true;
+    if (phraseNear(s, name, /designated to return|practice window|upgraded to limited|trending up|increased practice/)) out.trending = true;
     if (/designated to return|designated for return/.test(s)) out.designated = true;
     return out;
   }
@@ -475,22 +535,60 @@
     return { kind, long };
   }
 
+  function seasonNote() {
+    return {
+      serious: true, long: true, miss: 0, eq: 0, full: 0, ramp: false,
+      ret: null, practice: '', practiceBack: false, lead: false,
+    };
+  }
+
   function injuryPlan(input) {
     input = input || {};
     const nextWeek = input.nextWeek || 1;
     const basis = input.basis || 1;
     const lastWeek = input.lastWeek || 0;
-    const news = Object.assign({}, ...(input.news || []).map(parseNews));
+    const news = Object.assign({}, ...(input.news || []).map(text => parseNews(text, input.name)));
     const cls = classifyStatus(input.status, input.body);
-    const long = !!(news.long || cls.long);
-    const label = input.status || (long ? 'IR' : '');
+    const label = input.status || '';
     const detail = input.body || '';
-    if (long || (cls.kind === 'susp' && !news.missWeeks && !news.returnWeek)) {
+    const comment = String(input.comment || '');
+    const level = practiceLevel(input.practice) || practiceLevel(comment) || (news.full ? 'full' : (news.limited ? 'limited' : ''));
+    const trending = !!(input.trending || news.trending || (level === 'limited' && trendingText(comment)));
+    const seasonWords = !!(news.long || input.returnFar || phraseNear(comment, input.name, SEASON_OUTLOOK));
+    const gone = seasonNote();
+    gone.miss = basis;
+    gone.full = basis;
+    gone.label = label || 'IR';
+    gone.detail = detail;
+    gone.note = 'Out for the season';
+    gone.kind = cls.kind || 'ir';
+    if (seasonWords || (cls.kind === 'susp' && !news.missWeeks && !news.returnWeek && level !== 'full')) return gone;
+
+    function shortReturn(reason) {
+      let miss = reason === 'limited' ? 2 : 1;
+      if (reason === 'full' && (cls.kind === 'q' || cls.kind === 'd')) miss = cls.kind === 'd' ? 0.75 : 0.25;
+      if (reason === 'week' && news.returnWeek) miss = Math.max(cls.kind === 'q' ? 0.25 : 1, news.returnWeek - nextWeek);
+      miss = Math.max(0, Math.min(basis, miss));
+      const served = lastWeek ? Math.max(0, nextWeek - lastWeek - 1) : (nextWeek > 2 ? nextWeek - 1 : 0);
+      const ramp = miss >= 0.75 && (served >= 2 || cls.kind === 'ir' || cls.kind === 'out');
+      const serious = miss >= 0.75;
+      const ret = miss >= 1 ? nextWeek + Math.ceil(miss) : (news.returnWeek || null);
+      const practice = reason === 'limited' ? 'Limited, trending up' : (reason === 'week' ? 'Returning' : 'Full practice');
+      let note = 'Full practice. Short absence, not out for the season.';
+      if (reason === 'limited') note = 'Practice is trending up. Short absence, not out for the season.';
+      if (reason === 'week') note = 'Expected back soon. Short absence, not out for the season.';
       return {
-        serious: true, long: true, miss: basis, eq: 0, full: basis, ramp: false,
-        ret: null, label, detail, note: 'Out for the season', kind: cls.kind || 'ir',
+        serious, long: false, miss, eq: gameEq(basis, miss, ramp), full: basis,
+        ramp, ret, label, detail, note, kind: cls.kind === 'ok' ? 'q' : cls.kind,
+        practice, practiceBack: true, lead: false,
       };
     }
+
+    if (level === 'full' || (level === 'limited' && trending)) return shortReturn(level === 'full' ? 'full' : 'limited');
+    if (news.returnWeek && news.returnWeek <= nextWeek + 1 && (cls.long || cls.kind === 'ir' || cls.kind === 'out')) return shortReturn('week');
+    const soft = phraseNear(comment, input.name, /isn'?t believed to be a long-term|not believed to be a long-term|not a long-term|able to play|expected to play/);
+    if (!(soft && (cls.kind === 'q' || cls.kind === 'd')) && cls.long) return gone;
+
     let ret = null;
     let miss = 0;
     if (news.returnWeek) ret = news.returnWeek;
@@ -501,6 +599,7 @@
       if (news.practicing || news.designated) ret = nextWeek + Math.max(1, remainMin);
       else if (served >= IR_MIN) ret = nextWeek + 2;
       else ret = nextWeek + remainMin;
+      if (input.returnWeek && input.returnWeek > (ret || nextWeek) && input.returnWeek <= 18) ret = input.returnWeek;
     } else if (cls.kind === 'out') miss = 1;
     else if (cls.kind === 'd') miss = 0.75;
     else if (cls.kind === 'q') miss = 0.25;
@@ -516,7 +615,180 @@
     return {
       serious, long: false, miss, eq: gameEq(basis, miss, ramp && serious), full: basis,
       ramp: ramp && serious, ret, label, detail, note, kind: cls.kind,
+      practice: '', practiceBack: false, lead: false,
     };
+  }
+
+  // A fill-in can be getting the carries while the starter is out. He is
+  // real competition only with a starter's prior season or a bellcow pace.
+  function isLead(pl, players, baselines) {
+    baselines = baselines || {};
+    const priorOf = o => {
+      if (!o) return 0;
+      const b = baselines[o.id] || (o.ids && baselines[o.ids.sl]) || null;
+      if (b && b.ppr) return num(b.ppr);
+      return num(o.prior_ppr);
+    };
+    const self = priorOf(pl) || num(pl.ppr_pg) || (pl.tv && pl.tv.base && num(pl.tv.base[0]));
+    if (!(self >= 8)) return false;
+    const touch = { QB: 20, RB: 12, WR: 7, TE: 5 }[pl.pos] || 8;
+    for (const o of players || []) {
+      if (!o || o === pl || o.id === pl.id || o.team !== pl.team || o.pos !== pl.pos) continue;
+      if (priorOf(o) >= 10) return false;
+      if ((o.g || 0) >= 4 && num(o.ppr_pg) >= 14) return false;
+      if (volumeOf(o) >= touch && num(o.ppr_pg) >= 10 && (o.g || 0) >= 4) return false;
+    }
+    return true;
+  }
+
+  function weekForDate(data, iso) {
+    const day = String(iso || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
+    const season = data && data.meta && data.meta.season;
+    if (season && Number(day.slice(0, 4)) > Number(season)) return null;
+    const sched = (data && data.schedule) || {};
+    for (const wk of Object.keys(sched)) {
+      for (const g of sched[wk] || []) {
+        if ((g.date || '').slice(0, 10) === day) return Number(wk);
+      }
+    }
+    let week = null;
+    for (const wk of Object.keys(sched)) {
+      for (const g of sched[wk] || []) {
+        const d = (g.date || '').slice(0, 10);
+        if (d && d >= day) {
+          const w = Number(wk);
+          if (week == null || w < week) week = w;
+        }
+      }
+    }
+    return week;
+  }
+
+  function readEspnPractice(payload) {
+    const rows = [];
+    for (const club of (payload && payload.injuries) || []) {
+      for (const inj of club.injuries || []) {
+        const name = (inj.athlete || {}).displayName;
+        if (!name) continue;
+        const details = inj.details || {};
+        rows.push({
+          name,
+          status: inj.status || '',
+          body: details.type || '',
+          comment: [inj.shortComment, inj.longComment].filter(Boolean).join(' '),
+          returnDate: details.returnDate || '',
+        });
+      }
+    }
+    return rows;
+  }
+
+  function practiceInput(pl, row, data, news) {
+    const nextWeek = (data.meta && data.meta.next_week) || (pl.tv && pl.tv.week) || 1;
+    const season = data.meta && data.meta.season;
+    const returnFar = !!(row && row.returnDate && season && Number(String(row.returnDate).slice(0, 4)) > Number(season));
+    return {
+      status: (pl.sl_inj && pl.sl_inj.status) || (row && row.status) || '',
+      body: (pl.sl_inj && pl.sl_inj.body) || (row && row.body) || '',
+      lastWeek: pl.last_wk || 0,
+      nextWeek,
+      basis: (pl.tv && pl.tv.g) || gamesBasis(data),
+      news: news || [],
+      name: pl.name,
+      comment: (row && row.comment) || '',
+      practice: (row && row.comment) || '',
+      returnWeek: returnFar ? null : (row && weekForDate(data, row.returnDate)),
+      returnFar,
+      trending: !!(row && trendingText(row.comment)),
+    };
+  }
+
+  function leadNote(plan) {
+    if (plan && plan.lead && plan.practice === 'Full practice') {
+      plan.note = 'Full practice. Lead role, so the rest-of-season value stays near his healthy baseline.';
+    }
+    return plan;
+  }
+
+  // Rewrite a baked trade card when a live practice report clears a
+  // season-long tag, or shortens an IR clock to a game or two.
+  function reprice(pl, plan, data) {
+    const tv = pl && pl.tv;
+    const meta = data && data.meta && data.meta.trade;
+    if (!tv || !tv.base || !tv.v || !meta || !meta.repl || !meta.max) return false;
+    const wasLong = !!(tv.season || (tv.inj && tv.inj.long));
+    const basis = tv.g || plan.full || 1;
+    const week = tv.week || (data.meta && data.meta.next_week) || 1;
+    if (wasLong && !plan.long && Array.isArray(tv.nxt)) tv.nxt = tv.nxt.map(n => round1(num(n) / LONG_DYNASTY));
+    const share = plan.long ? 0 : playedShare(week, plan.miss, plan.ramp);
+    const play = plan.long ? 0 : gameEq(basis, plan.miss, plan.ramp);
+    tv.ros = tv.base.map(per => round1(num(per) * play));
+    tv.share = Math.round(share * 10000) / 10000;
+    tv.season = !!plan.long;
+    tv.miss = plan.long ? basis : plan.miss;
+    for (let i = 0; i < SCORINGS.length; i++) {
+      const key = SCORINGS[i];
+      const per = num(tv.base[i]);
+      const healthy = per * basis;
+      const nxtFull = num(tv.nxt && tv.nxt[i]);
+      const blend = DYNASTY_ROS * healthy + DYNASTY_NEXT * nxtFull;
+      for (const mode of QB_MODES) {
+        const lines = meta.repl[key] && meta.repl[key][mode] && meta.repl[key][mode][pl.pos];
+        const caps = meta.max[key] && meta.max[key][mode];
+        if (!lines || !caps) continue;
+        const packV = [];
+        const packP = [];
+        for (let hi = 0; hi < 2; hi++) {
+          const line = num(lines[hi]);
+          const healthyPts = hi === 0 ? healthy : blend;
+          let surplus;
+          if (plan.long && hi === 1) surplus = healthyPts * LONG_DYNASTY - line;
+          else if (!(share > 0)) surplus = -line;
+          else {
+            const use = hi === 0 ? share : dynastyShare(share);
+            const healthySurplus = healthyPts - line;
+            surplus = use * healthySurplus;
+            if (surplus > healthySurplus) surplus = healthySurplus;
+          }
+          packP.push(round1(surplus));
+          packV.push(scaled(surplus, num(caps[hi])));
+        }
+        tv.v[key][mode] = packV;
+        if (tv.par && tv.par[key]) tv.par[key][mode] = packP;
+      }
+    }
+    tv.inj = {
+      st: plan.label || (plan.long ? 'IR' : 'Injured'),
+      body: plan.detail || null,
+      ret: plan.ret,
+      long: !!plan.long,
+      miss: plan.miss,
+      note: plan.note || '',
+      practice: plan.practice || '',
+      lead: !!plan.lead,
+    };
+    return true;
+  }
+
+  function applyPractice(data, payload) {
+    if (!data || !payload || !(data.players || []).length) return 0;
+    const byName = new Map();
+    for (const pl of data.players) if (pl && pl.name) byName.set(foldName(pl.name), pl);
+    let n = 0;
+    for (const row of readEspnPractice(payload)) {
+      const pl = byName.get(foldName(row.name));
+      if (!pl || !pl.tv) continue;
+      const plan = leadNote(injuryPlan(practiceInput(pl, row, data, [])));
+      if (plan.practiceBack) plan.lead = isLead(pl, data.players, {});
+      leadNote(plan);
+      const bakedMiss = (pl.tv.season || (pl.tv.inj && pl.tv.inj.long)) ? Infinity : num(pl.tv.miss);
+      const falseSeason = !!(pl.tv.season || (pl.tv.inj && pl.tv.inj.long)) && !plan.long;
+      const shorter = plan.practiceBack && bakedMiss > plan.miss + 0.05;
+      if (!falseSeason && !shorter) continue;
+      if (reprice(pl, plan, data)) n += 1;
+    }
+    return n;
   }
 
   function sumOutlook(pl, data, project, scoringTable) {
@@ -610,15 +882,25 @@
     const newsById = opts.newsById || {};
     const baselines = opts.baselines || {};
     const nextWeek = (data.meta && data.meta.next_week) || 1;
+    const practiceByName = new Map();
+    for (const row of readEspnPractice(opts.espn)) practiceByName.set(foldName(row.name), row);
     const rows = players.map(pl => {
       const outlook = sumOutlook(pl, data, project, scoringTable);
       const basis = outlook.games;
       const statusText = (pl.sl_inj && pl.sl_inj.status) || (pl.inj && pl.inj.status) || (pl.inj && pl.inj.practice) || '';
       const bodyText = (pl.sl_inj && pl.sl_inj.body) || (pl.inj && pl.inj.injury) || '';
-      const timeline = injuryPlan({
+      const report = practiceByName.get(foldName(pl.name));
+      const seasonYear = data.meta && data.meta.season;
+      const returnFar = !!(report && report.returnDate && seasonYear && Number(String(report.returnDate).slice(0, 4)) > Number(seasonYear));
+      let timeline = injuryPlan({
         status: statusText, body: bodyText, lastWeek: pl.last_wk || 0, nextWeek, basis,
-        news: newsById[pl.id] || [],
+        news: newsById[pl.id] || [], name: pl.name,
+        comment: report && report.comment, practice: report && report.comment,
+        returnWeek: returnFar ? null : (report && weekForDate(data, report.returnDate)),
+        returnFar, trending: !!(report && trendingText(report.comment)),
       });
+      if (timeline.practiceBack) timeline.lead = isLead(pl, players, baselines);
+      timeline = leadNote(timeline);
       const modelPpg = {};
       for (const key of SCORINGS) {
         modelPpg[key] = outlook.samples ? outlook.raw[key] / basis : num(key === 'std' ? pl.std_pg : pl.ppr_pg);
@@ -750,7 +1032,7 @@
         nxt: SCORINGS.map(k => round1(row.nxt[k])),
         base: SCORINGS.map(k => round1(row.rate[k])),
         pre, v, par,
-        inj: showInj ? { st: tl.label || (tl.long ? 'IR' : 'Injured'), body: tl.detail || null, ret: tl.ret, long: !!tl.long, miss: tl.miss, note: tl.note || '' } : null,
+        inj: showInj ? { st: tl.label || (tl.long ? 'IR' : 'Injured'), body: tl.detail || null, ret: tl.ret, long: !!tl.long, miss: tl.miss, note: tl.note || '', practice: tl.practice || '', lead: !!tl.lead } : null,
         share: Math.round(row.share * 10000) / 10000,
         week: nextWeek,
         starter: !!row.pl.starter,
@@ -1177,6 +1459,12 @@
   function injLabel(pl) {
     const inj = pl && pl.tv && pl.tv.inj;
     if (!inj || !inj.st) return '';
+    if (inj.practice && !inj.long) {
+      const bits = [inj.practice];
+      if (inj.body) bits.push(inj.body);
+      if (inj.ret) bits.push('back week ' + inj.ret);
+      return bits.join(' · ');
+    }
     const bits = [inj.st];
     if (inj.body) bits.push(inj.body);
     if (inj.ret) bits.push('back week ' + inj.ret);
@@ -1410,7 +1698,7 @@
     curve, scaled,
     missFromText, statusMiss, newsMiss, combineMiss, availability, ageFactor, roleFactor, teamFactor, pointsOf,
     gamesBasis, gameEq, weekWeight, playedShare, dynastyShare, PLAYOFF_WEIGHT, RETURN_RAMP, DYNASTY_SHORT,
-    parseNews, injuryPlan, sumOutlook, IR_MIN, LONG_DYNASTY,
+    parseNews, injuryPlan, isLead, applyPractice, sumOutlook, IR_MIN, LONG_DYNASTY,
     ageFromBirth, spearman, adjustSide, gradeGap, analyze, fairer, tierOf, valueOf, attachTrade, backtest, round1,
     fitAdpCurve, blendValue, blendAdp, ADP_WEIGHT,
     ensure, init, render: renderTrade, snapshot, restore,

@@ -212,6 +212,96 @@ test('IR timelines keep a return and an ACL is a redraft zero', () => {
   assert.equal(trade.parseNews('dealing with a sore knee').long, undefined);
 });
 
+test('full practice overrides a stale PUP or ACL tag', () => {
+  const comment = 'Charbonnet (knee) was a full participant at Wednesday\'s practice. He tore the ACL in his left knee last January.';
+  const plan = trade.injuryPlan({
+    status: 'PUP', body: 'Knee - ACL', lastWeek: 0, nextWeek: 7, basis: 12,
+    name: 'Zach Charbonnet', comment, practice: comment, news: [],
+  });
+  assert.equal(plan.long, false);
+  assert.equal(plan.practice, 'Full practice');
+  assert.equal(plan.miss, 1);
+  assert.equal(plan.ret, 8);
+  assert.match(plan.note, /not out for the season/);
+  const season = trade.injuryPlan({
+    status: 'Out', body: 'Knee', lastWeek: 6, nextWeek: 7, basis: 12, name: 'Terry McLaurin',
+    comment: 'McLaurin will miss the rest of the season with a torn patellar tendon.',
+  });
+  assert.equal(season.long, true);
+  assert.equal(season.note, 'Out for the season');
+  const limited = trade.injuryPlan({
+    status: 'IR', body: 'Hamstring', lastWeek: 4, nextWeek: 7, basis: 12, name: 'Sam',
+    comment: 'Sam was a limited participant after the team opened his practice window.',
+    trending: true,
+  });
+  assert.equal(limited.long, false);
+  assert.equal(limited.miss, 2);
+  assert.equal(limited.practice, 'Limited, trending up');
+  const roundup = 'Mike Evans\' Achilles; significant injuries to Terry McLaurin, Davante Adams';
+  assert.equal(trade.parseNews(roundup, 'Davante Adams').long, undefined);
+  assert.equal(trade.parseNews('Dell is on track to return and make his season debut in Week 7', 'Tank Dell').returnWeek, 7);
+  const debut = trade.injuryPlan({
+    status: 'IR', body: 'Knee - ACL + MCL', lastWeek: 0, nextWeek: 7, basis: 12, name: 'Tank Dell',
+    news: ['Dell is on track to return and make his season debut in Week 7'],
+  });
+  assert.equal(debut.long, false);
+  assert.equal(debut.miss, 1);
+  const evansComment = 'Evans (ribs/Achilles) officially didn\'t practice Wednesday. As expected, Evans didn\'t mix into drills just two days removed from exiting Monday\'s game early due to an Achilles injury. Afterward, the coach termed the issue right Achilles soreness, which isn\'t believed to be a long-term concern. The coach also expressed hope that Evans will be able to play Sunday.';
+  const evans = trade.injuryPlan({
+    status: 'Questionable', body: 'Achilles', lastWeek: 6, nextWeek: 7, basis: 12, name: 'Mike Evans',
+    comment: evansComment, practice: evansComment,
+  });
+  assert.equal(evans.long, false);
+  assert.equal(evans.miss, 0.25);
+  assert.equal(evans.practice, '');
+});
+
+test('a returning lead back keeps a short discount instead of a season zero', () => {
+  const star = { id: 'star', name: 'Zach Charbonnet', pos: 'RB', team: 'SEA', g: 0, ppr_pg: 11.09, last_wk: 0, sl_inj: { status: 'PUP', body: 'Knee - ACL' } };
+  const fill = { id: 'fill', name: 'Emanuel Wilson', pos: 'RB', team: 'SEA', g: 6, ppr_pg: 9.4, w: { ca: 15.9, tg: 1.6 } };
+  const cow = { id: 'cow', name: 'Workhorse', pos: 'RB', team: 'SEA', g: 6, ppr_pg: 16, w: { ca: 18, tg: 3 } };
+  assert.equal(trade.isLead(star, [star, fill], {}), true);
+  assert.equal(trade.isLead(star, [star, cow], {}), false);
+  const data = {
+    meta: {
+      next_week: 7, season: 2026,
+      trade: {
+        repl: { ppr: { qb1: { RB: [131.4, 149] }, sflex: { RB: [131.4, 149] } }, half: { qb1: { RB: [120, 130] }, sflex: { RB: [120, 130] } }, std: { qb1: { RB: [100, 110] }, sflex: { RB: [100, 110] } } },
+        max: { ppr: { qb1: [173.5, 270], sflex: [173.5, 270] }, half: { qb1: [160, 240], sflex: [160, 240] }, std: { qb1: [140, 200], sflex: [140, 200] } },
+      },
+    },
+    schedule: { 7: [{ date: '2026-10-25', home: 'SEA', away: 'KC' }] },
+    players: [star, fill],
+  };
+  star.tv = {
+    age: 25, g: 12, miss: 12, season: true, week: 7,
+    base: [11.8, 11.1, 10.4], nxt: [202, 189.4, 177],
+    ros: [0, 0, 0], share: 0,
+    pre: { ppr: { qb1: [11.4, 10.6], sflex: [11.4, 10.6] }, half: { qb1: [13, 13], sflex: [13, 13] }, std: { qb1: [16, 17], sflex: [16, 17] } },
+    v: { ppr: { qb1: [1.4, 7.4], sflex: [1.7, 7.4] }, half: { qb1: [1.6, 9.6], sflex: [2, 9.6] }, std: { qb1: [1.7, 13.6], sflex: [2.2, 13.6] } },
+    par: { ppr: { qb1: [-131.4, 11], sflex: [-131.4, 11] }, half: { qb1: [0, 0], sflex: [0, 0] }, std: { qb1: [0, 0], sflex: [0, 0] } },
+    inj: { st: 'PUP', body: 'Knee - ACL', ret: null, long: true, miss: 12, note: 'Out for the season' },
+  };
+  const payload = { injuries: [{ displayName: 'Seattle Seahawks', injuries: [{
+    status: 'Out',
+    shortComment: 'Charbonnet (knee) was a full participant at Wednesday\'s practice.',
+    longComment: 'He tore the ACL last January and was a full participant for the first time.',
+    details: { type: 'Knee - ACL', returnDate: '2026-10-25', fantasyStatus: { description: 'PUP-R' } },
+    athlete: { displayName: 'Zach Charbonnet' },
+  }] }] };
+  const n = trade.applyPractice(data, payload);
+  assert.equal(n, 1);
+  assert.equal(star.tv.season, false);
+  assert.equal(star.tv.inj.long, false);
+  assert.equal(star.tv.inj.practice, 'Full practice');
+  assert.equal(star.tv.miss, 1);
+  assert.equal(star.tv.inj.lead, true);
+  assert.ok(star.tv.v.ppr.qb1[0] > 8, 'redraft ' + star.tv.v.ppr.qb1[0]);
+  assert.ok(star.tv.v.ppr.qb1[0] < star.tv.pre.ppr.qb1[0] + 0.05);
+  assert.ok(star.tv.v.ppr.qb1[1] > star.tv.v.ppr.qb1[0] - 1);
+  assert.match(star.tv.inj.note, /Lead role/);
+});
+
 test('the value curve stays smooth and a better quarterback ranks higher', () => {
   assert.equal(trade.CURVE_T, 20);
   assert.equal(trade.SLOTS.qb1.QB, 20);
