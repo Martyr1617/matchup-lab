@@ -9,6 +9,7 @@ const { execFileSync } = require('child_process');
 const { project, SCORING } = require('./site/model');
 const { attachTrade, backtest, ageFromBirth } = require('./site/trade');
 const ESPN_INJURIES = 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/injuries';
+const FANTASYCALC = 'https://api.fantasycalc.com/values/current?isDynasty=false&numQbs=1&numTeams=12&ppr=1';
 
 const TEAM = { LAR: 'LA', OAK: 'LV', WSH: 'WAS', JAC: 'JAX' };
 function normTeam(t) { return TEAM[t] || t || ''; }
@@ -448,8 +449,24 @@ function main() {
   } catch (e) {
     console.log('WARN espn practice unavailable', String(e.message || e).split('\n')[0]);
   }
+  const market = {};
+  try {
+    const raw = execFileSync('curl', ['-fsSL', '--retry', '2', '--max-time', '25', FANTASYCALC], { encoding: 'utf8', maxBuffer: 20 * 1024 * 1024 });
+    const rows = JSON.parse(raw);
+    let n = 0;
+    for (const row of rows || []) {
+      const player = row && row.player;
+      const sl = player && player.sleeperId != null ? String(player.sleeperId) : '';
+      if (!sl || !(row.overallRank > 0)) continue;
+      market[sl] = { rank: row.overallRank, posRank: row.positionRank, pos: player.position };
+      n += 1;
+    }
+    console.log('fantasycalc redraft', n);
+  } catch (e) {
+    console.log('WARN fantasycalc unavailable', String(e.message || e).split('\n')[0]);
+  }
   const t0 = Date.now();
-  attachTrade(data, { project, scoring: SCORING, ages, baselines, newsById, espn });
+  attachTrade(data, { project, scoring: SCORING, ages, baselines, newsById, espn, market });
   if (process.argv.includes('--backtest')) {
     const result = backtest(data, project, SCORING);
     data.meta.trade.backtest = { spearman: result.spearman == null ? null : Math.round(result.spearman * 1000) / 1000, n: result.n };

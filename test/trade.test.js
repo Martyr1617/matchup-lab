@@ -212,6 +212,15 @@ test('IR timelines keep a return and an ACL is a redraft zero', () => {
   assert.equal(trade.parseNews('dealing with a sore knee').long, undefined);
 });
 
+test('two quiet weeks do not erase a prior WR1', () => {
+  const rate = trade.talentRate(13.8, 23, 5, 16.4, false);
+  assert.ok(Math.abs(rate - 16.42) < 0.02, 'rate ' + rate);
+  assert.equal(trade.talentRate(13.8, 23, 5, 16.4, true), 13.8);
+  assert.equal(trade.talentRate(13.8, 0, 5, 0, false), 13.8);
+  assert.equal(trade.tierOf('WR', 6), 'WR1');
+  assert.equal(trade.tierOf('WR', 23), 'WR2');
+});
+
 test('full practice overrides a stale PUP or ACL tag', () => {
   const comment = 'Charbonnet (knee) was a full participant at Wednesday\'s practice. He tore the ACL in his left knee last January.';
   const plan = trade.injuryPlan({

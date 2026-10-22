@@ -38,6 +38,12 @@
      teammate with a 10-point prior season or a 14-point current pace, keeps
      that healthy rest-of-season rate. A fill-in workload does not take it.
      A vague injury blurb does not change the timeline.
+     A player with at least two games is shrunk toward the best of his last
+     few full seasons, counting that history as two games, and then moved
+     20 percent of the way toward the points pace implied by his current
+     redraft market rank. One or two quiet weeks do not set the rate alone.
+     The market rank is the FantasyCalc redraft board. A season-ending
+     injury stays on the injury timeline.
 
    Hurt players, and anyone with no current-week projection, use a healthy
    baseline instead of a depressed or missing 2026 sample: 65 percent of the
@@ -115,6 +121,10 @@
   // [redraft, dynasty]. Healthy players already sit on the healthy baseline,
   // so the smaller weight usually does not move them.
   const ADP_WEIGHT = { healthy: [0.05, 0.15], hurt: [0.30, 0.35] };
+  // Two games of prior-season pace, then 20 percent of the market-implied pace.
+  // Tuned on 2024–2025: rest-of-season PPR error fell and positional rank held.
+  const TALENT_K = 2;
+  const MARKET_W = 0.2;
   const PLAYOFF_WEIGHT = 1.5;
   const RETURN_RAMP = 0.9;
   // Share of the redraft haircut that dynasty feels on a short absence.
@@ -195,6 +205,42 @@
     const cap = Math.max(value, healthy);
     const mixed = (1 - weight) * value + weight * slot;
     return publishValue(Math.min(cap, Math.max(value, mixed)));
+  }
+
+  // model is this year's projected points per game. prior is the recent
+  // full-season pace. expert is the pace implied by market rank. A
+  // season-ending injury keeps the model rate, which the injury timeline
+  // then discounts.
+  function talentRate(model, prior, games, expert, longTerm) {
+    let rate = num(model);
+    const n = num(games);
+    if (!longTerm && prior > 0 && n >= 2) rate = (n * rate + TALENT_K * prior) / (n + TALENT_K);
+    if (!longTerm && expert > 0 && n >= 2) rate = (1 - MARKET_W) * rate + MARKET_W * expert;
+    return rate;
+  }
+
+  function marketOf(pl, market) {
+    if (!market || !pl) return null;
+    const sl = pl.ids && pl.ids.sl;
+    if (sl && market[sl]) return market[sl];
+    if (pl.id && market[pl.id]) return market[pl.id];
+    return null;
+  }
+
+  function marketCurves(players, baselines, market) {
+    const curves = {};
+    baselines = baselines || {};
+    for (const key of SCORINGS) {
+      const points = [];
+      for (const pl of players || []) {
+        const row = marketOf(pl, market);
+        const hist = baselines[pl.id] || (pl.ids && baselines[pl.ids.sl]) || null;
+        if (!row || !(row.rank > 0) || !hist || !(hist[key] > 0)) continue;
+        points.push({ adp: row.rank, value: hist[key], hurt: false });
+      }
+      curves[key] = fitAdpCurve(points);
+    }
+    return curves;
   }
 
   function blendAdp(players) {
@@ -884,6 +930,7 @@
     const nextWeek = (data.meta && data.meta.next_week) || 1;
     const practiceByName = new Map();
     for (const row of readEspnPractice(opts.espn)) practiceByName.set(foldName(row.name), row);
+    const mktCurves = marketCurves(players, baselines, opts.market || null);
     const rows = players.map(pl => {
       const outlook = sumOutlook(pl, data, project, scoringTable);
       const basis = outlook.games;
@@ -918,6 +965,14 @@
       const ageF = ageFactor(pl.pos, age);
       if (usedBase) {
         for (const key of SCORINGS) rate[key] *= team;
+      }
+      if (!timeline.long && (pl.g || 0) >= 2 && !usedBase) {
+        const row = marketOf(pl, opts.market);
+        for (const key of SCORINGS) {
+          const expert = row && mktCurves[key] ? mktCurves[key](row.rank) : 0;
+          const prior = hist && hist[key];
+          rate[key] = talentRate(rate[key], prior, pl.g || 0, expert, false);
+        }
       }
       const playEq = timeline.long ? 0 : gameEq(basis, timeline.miss, timeline.ramp);
       const ros = {};
@@ -1065,6 +1120,8 @@
       consolidation: CONSOLIDATION,
       cap: CONSOLIDATION_CAP,
       adp: ADP_WEIGHT,
+      talent: TALENT_K,
+      market: MARKET_W,
       max: maxOut,
       repl,
     };
@@ -1700,7 +1757,7 @@
     gamesBasis, gameEq, weekWeight, playedShare, dynastyShare, PLAYOFF_WEIGHT, RETURN_RAMP, DYNASTY_SHORT,
     parseNews, injuryPlan, isLead, applyPractice, sumOutlook, IR_MIN, LONG_DYNASTY,
     ageFromBirth, spearman, adjustSide, gradeGap, analyze, fairer, tierOf, valueOf, attachTrade, backtest, round1,
-    fitAdpCurve, blendValue, blendAdp, ADP_WEIGHT,
+    fitAdpCurve, blendValue, blendAdp, ADP_WEIGHT, talentRate, marketCurves, TALENT_K, MARKET_W,
     ensure, init, render: renderTrade, snapshot, restore,
   };
 });
