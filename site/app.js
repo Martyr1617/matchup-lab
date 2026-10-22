@@ -464,8 +464,13 @@
   const isOut = pl => { const i = injuryOf(pl); return !!(i && OUT_STATUS.test(i.status.trim())); };
   function hadGame(team, week) { return !!(state.data.schedule[week] || []).find(g => g.home === team || g.away === team); }
   const missedLast = pl => { const lc = state.data.meta.last_completed_week; return pl.last_wk < lc && hadGame(pl.team, lc); };
+  function practiceBack(pl) {
+    const inj = pl && pl.tv && pl.tv.inj;
+    return !!(inj && inj.practice && !inj.long);
+  }
   function statusFlag(pl) {
     const lc = state.data.meta.last_completed_week;
+    if (practiceBack(pl)) return `<span class="flag">${esc(pl.tv.inj.practice)}</span>`;
     const inj = injuryOf(pl);
     if (inj && OUT_STATUS.test(inj.status.trim())) return `<span class="flag out">${esc(inj.status)}${inj.injury ? ' · ' + esc(inj.injury) : ''}</span>`;
     if (inj) return `<span class="flag">${esc(inj.status)}${inj.injury ? ' · ' + esc(inj.injury) : ''}</span>`;
@@ -545,6 +550,15 @@
       return;
     }
     box.innerHTML = items.map(newsCard).join('');
+  }
+  async function loadPracticeReports() {
+    if (!window.MLTrade || !window.MLTrade.applyPractice || !state.data) return;
+    try {
+      const r = await fetch('https://site.api.espn.com/apis/site/v2/sports/football/nfl/injuries');
+      if (!r.ok) return;
+      const n = window.MLTrade.applyPractice(state.data, await r.json());
+      if (n) rerender();
+    } catch (e) { /* the baked injury tag stays */ }
   }
   async function loadLiveInjuries() {
     const F = JSON.stringify({ players: { filterInjured: { value: true }, filterSlotIds: { value: [0, 2, 4, 6] }, filterStatsForExternalIds: { value: [2099] }, sortPercOwned: { sortAsc: false, sortPriority: 1 }, limit: 600 } });
@@ -792,7 +806,8 @@
     const injP = injuryOf(pl);
     const outP = injP && OUT_STATUS.test(injP.status.trim());
     const injTxt = injP ? `${esc(injP.status)}${injP.injury ? ' (' + esc(injP.injury) + ')' : ''}${injP.live ? ' per ESPN' : ''}` : '';
-    const missedNote = outP ? `<div class="notice bad">⚠ ${esc(pl.name)} is listed ${injTxt}. Projection shows his output if he were active.</div>`
+    const missedNote = practiceBack(pl) ? `<div class="notice">${esc(pl.tv.inj.note || pl.tv.inj.practice)}</div>`
+      : outP ? `<div class="notice bad">⚠ ${esc(pl.name)} is listed ${injTxt}. Projection shows his output if he were active.</div>`
       : missedLast(pl) ? `<div class="notice">⚠ ${esc(pl.name)} did not play in Week ${lc}${injP ? ' — currently ' + injTxt : ''}. Projection assumes a normal workload; verify status before kickoff.</div>`
       : injP ? `<div class="notice">⚠ Injury status: ${injTxt}.</div>` : '';
 
@@ -1484,6 +1499,7 @@
       if (booted) {
         fillWeeks(true);
         if (!(silent && userIsEditing())) renderCurrent();
+        loadPracticeReports();
       } else {
         startUi();
       }
@@ -1530,6 +1546,7 @@
     if (!refreshing && !(saved && saved.banner)) paintRefreshStatus('idle');
     bindAutoRefresh();
     loadLiveInjuries();
+    loadPracticeReports();
     window.ML = { state, SCORING, weatherChip, weatherText, loadWeather, injuryOf, isOut, project, makeDist, gameFor, f1, f2, pct, esc, avatar, statusFlag, newsBadge, hasInjuryNews, openPlayer, rkOrd, fmtKick, tn, setView, compareRows, compareTable, renderNews, renderBoard, refreshData };
     if (window.MLTrade && saved && saved.trade && window.MLTrade.restore) window.MLTrade.restore(saved.trade);
     const teamReady = window.MLTeam ? window.MLTeam.init() : null;

@@ -8,6 +8,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { project, SCORING } = require('./site/model');
 const { attachTrade, backtest, ageFromBirth } = require('./site/trade');
+const ESPN_INJURIES = 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/injuries';
 
 const TEAM = { LAR: 'LA', OAK: 'LV', WSH: 'WAS', JAC: 'JAX' };
 function normTeam(t) { return TEAM[t] || t || ''; }
@@ -439,8 +440,16 @@ function main() {
   markStarters(data, sl);
   markListed(data, sl, baselines, names);
   const newsById = loadNewsById(data.players);
+  let espn = null;
+  try {
+    const raw = execFileSync('curl', ['-fsSL', '--retry', '2', '--max-time', '25', ESPN_INJURIES], { encoding: 'utf8', maxBuffer: 20 * 1024 * 1024 });
+    espn = JSON.parse(raw);
+    console.log('espn practice rows', ((espn && espn.injuries) || []).reduce((n, club) => n + ((club && club.injuries) || []).length, 0));
+  } catch (e) {
+    console.log('WARN espn practice unavailable', String(e.message || e).split('\n')[0]);
+  }
   const t0 = Date.now();
-  attachTrade(data, { project, scoring: SCORING, ages, baselines, newsById });
+  attachTrade(data, { project, scoring: SCORING, ages, baselines, newsById, espn });
   if (process.argv.includes('--backtest')) {
     const result = backtest(data, project, SCORING);
     data.meta.trade.backtest = { spearman: result.spearman == null ? null : Math.round(result.spearman * 1000) / 1000, n: result.n };
