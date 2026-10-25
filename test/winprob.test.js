@@ -1,5 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const { phaseFromScore, remain, sideOf, winProb, suggest } = require('../site/winprob');
 
 const ELIG = {
@@ -119,6 +121,28 @@ test('a max-points seed is the fallback when no swap raises the win chance', () 
   assert.equal(out.show, true);
   assert.equal(out.swaps[0].start.key, 'boom');
   assert.ok(out.bestProb + 1e-9 >= winProb([locked, boom], opp));
+});
+
+test('live scoring polls every 30 seconds and updates numbers in place', () => {
+  const team = fs.readFileSync(path.join(__dirname, '..', 'site', 'team.js'), 'utf8');
+  const css = fs.readFileSync(path.join(__dirname, '..', 'site', 'styles.css'), 'utf8');
+  const html = fs.readFileSync(path.join(__dirname, '..', 'site', 'index.html'), 'utf8');
+  assert.match(team, /const LIVE_MS = 30 \* 1000/);
+  assert.match(team, /const IDLE_MS = 30 \* 60 \* 1000/);
+  assert.match(team, /class="live-pill"/);
+  assert.match(team, /class="live-dot"/);
+  assert.match(team, /function tickText/);
+  assert.match(team, /function patchLive/);
+  assert.match(team, /status === 429/);
+  assert.match(team, /retry-after/);
+  assert.match(team, /if \(gamesAreLive\(\)\) \{ refreshLive\(\)\.finally/);
+  assert.match(team, /visibilityState === 'hidden'/);
+  assert.doesNotMatch(team, /Updated \$\{|ptClock|AM PT|PM PT/);
+  assert.match(team, /every 30 seconds/);
+  assert.match(team, /every 30 minutes/);
+  assert.match(css, /@keyframes live-pulse/);
+  assert.match(css, /@keyframes live-tick/);
+  assert.match(html, /about every 30 seconds/);
 });
 
 test('kickers and defenses stay in the slot they already occupy', () => {
