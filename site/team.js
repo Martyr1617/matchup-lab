@@ -83,7 +83,17 @@
   // ---------- Fetch helpers ----------
   async function getJSON(url) {
     const r = await fetch(url);
-    if (!r.ok) { const e = new Error(`HTTP ${r.status}`); e.status = r.status; throw e; }
+    if (!r.ok) {
+      const e = new Error(`HTTP ${r.status}`);
+      e.status = r.status;
+      const retry = r.headers.get('retry-after');
+      if (retry) {
+        const secs = Number(retry);
+        const ms = Number.isFinite(secs) ? secs * 1000 : Date.parse(retry) - Date.now();
+        if (ms > 0) e.retryAfterMs = ms;
+      }
+      throw e;
+    }
     return r.json();
   }
 
@@ -309,7 +319,7 @@
   }
   const normCdf = z => { const t = 1 / (1 + 0.2316419 * Math.abs(z)); const d = 0.3989423 * Math.exp(-z * z / 2); const p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274)))); return z > 0 ? 1 - p : p; };
 
-  function analyze(league, teamId) {
+  function analyze(league, teamId, opts) {
     const team = league.teams.find(t => t.id === teamId);
     if (!team) return null;
     const S = league.source === 'manual' ? ML.SCORING[ML.state.scoring] : league.S;
@@ -383,7 +393,7 @@
     // Waiver targets: an available player is an add only when they out-value
     // the least valuable player you can spare, at any position.
     let waivers = null;
-    if (league.source !== 'manual' && globalThis.MLWaiver) {
+    if (!(opts && opts.waivers === false) && league.source !== 'manual' && globalThis.MLWaiver) {
       const rostered = new Set();
       for (const t of league.teams) for (const p of t.players) if (p.ml) rostered.add(p.ml.id);
       const free = [];
@@ -533,11 +543,6 @@
     return `<span class="sub">${p.status === 'np' ? '—' : '0.0'}</span>`;
   }
   function rangeCell(p) { return p && p.status === 'ok' ? `<span class="range"><span class="fl">${ML.f1(p.pr.floor)}</span><span class="rg-sep">–</span><span class="cl">${ML.f1(p.pr.ceil)}</span></span>` : ''; }
-  function ptClock(ms) {
-    try {
-      return new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit' }).format(ms) + ' PT';
-    } catch (e) { return ''; }
-  }
   function liveNum(p) {
     if (!p) return '—';
     if (p.livePts == null && (!p.gamePhase || p.gamePhase.status === 'yet')) return '0.0';
@@ -571,40 +576,45 @@
     const p1 = Math.round(w.bestProb * 100);
     return `${where} — ${bits.join('; ')}: win chance ${p0}% → ${p1}%`;
   }
-  function liveRow(slot, p, actor) {
-    return `<td>${slotBadge(slot)}</td><td>${playerCell(p)}</td><td class="num">${liveNum(p)}</td><td>${p ? statusCell(p) : '<span class="sub">—</span>'}</td><td class="num">${finalNum(actor)}</td>`;
+  function liveRow(slot, p, actor, side) {
+    return `<td>${slotBadge(slot)}</td><td class="who">${playerCell(p)}</td><td class="num" data-k="${side}-pts">${liveNum(p)}</td><td data-k="${side}-st">${p ? statusCell(p) : '<span class="sub">—</span>'}</td><td class="num" data-k="${side}-final">${finalNum(actor)}</td>`;
+  }
+  function liveCadence(anyLive) {
+    if (!T.league || T.league.source !== 'sleeper') return 'Live Sleeper points are available on Sleeper leagues. This view uses kickoff time for who is locked.';
+    if (anyLive && T.live && T.live.backoff > LIVE_MS) return 'Sleeper was busy, so the next check waits a little longer. Scores still update while this tab is open.';
+    if (anyLive) return 'Refreshes about every 30 seconds while a game is live and this tab is open.';
+    return 'Refreshes about every 30 minutes until a game is live.';
   }
   function liveBlock(A, L) {
     const mine = A.myBasePlayers || [];
     const actors = mine.map(toActor);
     const opp = A.opp;
     const side = A.mySide || WP.sideOf(actors);
-    const anyLive = T.live && T.live.games && Object.values(T.live.games).some(g => g.status === 'live');
-    const when = T.live && T.live.at ? `Updated ${ptClock(T.live.at)}` : (L.source === 'sleeper' ? 'Waiting on Sleeper' : 'From this week\'s projections');
-    const cadence = L.source === 'sleeper'
-      ? (anyLive ? 'Refreshes about every minute while a game is live and this tab is open.' : 'Refreshes about every 30 minutes until a game is live.')
-      : 'Live Sleeper points are available on Sleeper leagues. This view uses kickoff time for who is locked.';
+    const anyLive = gamesAreLive();
+    const mark = anyLive ? '<span class="live-pill"><span class="live-dot" aria-hidden="true"></span>LIVE</span>' : '';
     const err = T.live && T.live.error ? `<div class="notice bad">Couldn't refresh Sleeper just now (${ML.esc(T.live.error)}). Showing the last lineup we could read.</div>` : '';
+    const margin = opp ? `${side.mean >= opp.side.mean ? 'up' : 'down'} ${ML.f1(Math.abs(side.mean - opp.side.mean))}` : '';
     const board = opp ? `
       <div class="live-board">
-        <div class="live-side"><div class="k">Your live total</div><div class="live-pts">${ML.f1(side.live)}</div><div class="sub">Proj final ${ML.f1(side.mean)}</div></div>
-        <div class="live-wp"><div class="k">Win chance</div><div class="v">${ML.pct(opp.win)}</div><div class="sub">${side.mean >= opp.side.mean ? 'up' : 'down'} ${ML.f1(Math.abs(side.mean - opp.side.mean))}</div></div>
-        <div class="live-side"><div class="k">${ML.esc(opp.team.name)}</div><div class="live-pts">${ML.f1(opp.side.live)}</div><div class="sub">Proj final ${ML.f1(opp.side.mean)}</div></div>
+        <div class="live-side"><div class="k">Your live total</div><div class="live-pts" data-k="mine">${ML.f1(side.live)}</div><div class="sub">Proj final <span data-k="mine-final">${ML.f1(side.mean)}</span></div></div>
+        <div class="live-wp"><div class="k">Win chance</div><div class="v" data-k="wp">${ML.pct(opp.win)}</div><div class="sub" data-k="margin">${margin}</div></div>
+        <div class="live-side"><div class="k">${ML.esc(opp.team.name)}</div><div class="live-pts" data-k="opp">${ML.f1(opp.side.live)}</div><div class="sub">Proj final <span data-k="opp-final">${ML.f1(opp.side.mean)}</span></div></div>
       </div>` : `
-      <div class="live-board solo"><div class="live-side"><div class="k">Your projected total</div><div class="live-pts">${ML.f1(side.mean)}</div><div class="sub">No opponent is linked for this week</div></div></div>`;
+      <div class="live-board solo"><div class="live-side"><div class="k">Your projected total</div><div class="live-pts" data-k="mine">${ML.f1(side.mean)}</div><div class="sub">No opponent is linked for this week</div></div></div>`;
     const n = Math.max(mine.length, opp ? opp.players.length : 0);
     const rows = [];
     for (let i = 0; i < n; i++) {
       const slot = L.slots[i] || '';
       const p = mine[i];
       const o = opp && opp.players[i];
-      rows.push(`<tr>${liveRow(slot, p, actors[i])}${opp ? `<td class="opp-cell">${playerCell(o)}</td><td class="num">${liveNum(o)}</td><td>${o ? statusCell(o) : '<span class="sub">—</span>'}</td>` : ''}</tr>`);
+      rows.push(`<tr data-i="${i}" data-me="${ML.esc((p && p.key) || '')}" data-opp="${ML.esc((o && o.key) || '')}">${liveRow(slot, p, actors[i], 'me')}${opp ? `<td class="opp-cell who">${playerCell(o)}</td><td class="num" data-k="opp-pts">${liveNum(o)}</td><td data-k="opp-st">${o ? statusCell(o) : '<span class="sub">—</span>'}</td>` : ''}</tr>`);
     }
     const head = opp
       ? `<tr><th>Slot</th><th>Your starter</th><th class="num">Live</th><th>Status</th><th class="num">Proj final</th><th>Opponent</th><th class="num">Live</th><th>Status</th></tr>`
       : `<tr><th>Slot</th><th>Starter</th><th class="num">Live</th><th>Status</th><th class="num">Proj final</th></tr>`;
+    const swapKey = A.winAdvice && A.winAdvice.show ? A.winAdvice.swaps.filter(s => s.start).map(s => (s.start.key || '') + '>' + (s.sit && s.sit.key || '')).join('|') : '';
     const advice = A.winAdvice && A.winAdvice.show ? `
-      <div class="card" id="winprob-lineup">
+      <div class="card" id="winprob-lineup" data-swaps="${ML.esc(swapKey)}">
         <div class="card-title">Win-probability suggestion</div>
         <p class="wp-line">${ML.esc(adviceSentence(A.winAdvice))}</p>
         <div class="moves">${A.winAdvice.swaps.filter(s => s.start).map(s => {
@@ -617,12 +627,12 @@
         <p class="sub">This is separate from the optimal lineup below, which still maximizes expected points. A player whose game has started stays put.</p>
       </div>` : '';
     return `
-      ${err}
+      <div id="liveErr">${err}</div>
       <div class="card live-card">
-        <div class="live-head"><div class="card-title">Live matchup</div><div class="sub">${ML.esc(when)}</div></div>
+        <div class="live-head"><div class="card-title">Live matchup</div><div class="live-state">${mark}</div></div>
         ${board}
         <div class="tscroll"><table class="team-table live-table"><thead>${head}</thead><tbody>${rows.join('') || '<tr class="empty-row"><td colspan="8">No starters set.</td></tr>'}</tbody></table></div>
-        <p class="sub live-note">${ML.esc(cadence)} Proj final is live points plus the share of the projection still left on the clock.</p>
+        <p class="sub live-note"><span data-k="note">${ML.esc(liveCadence(anyLive))}</span> Proj final is live points plus the share of the projection still left on the clock.</p>
       </div>
       ${advice}`;
   }
@@ -806,11 +816,62 @@
     }, 900);
   }
 
-  const LIVE_MS = 60 * 1000;
+  const LIVE_MS = 30 * 1000;
   const IDLE_MS = 30 * 60 * 1000;
+  const BACKOFF_MAX = 5 * 60 * 1000;
   let pollTimer = 0;
+  let liveFlight = null;
+  function weekGames() {
+    if (!ML || !ML.state || !ML.state.data || !ML.state.data.schedule) return [];
+    const sch = ML.state.data.schedule;
+    return sch[ML.state.week] || sch[String(ML.state.week)] || [];
+  }
+  function scoredPhase(team) {
+    const games = T.live && T.live.games;
+    if (!games || !team) return null;
+    return games[team] || games[TEAM_ALIAS[team]] || null;
+  }
   function gamesAreLive() {
-    return !!(T.live && T.live.games && Object.values(T.live.games).some(g => g.status === 'live'));
+    const games = T.live && T.live.games;
+    if (games && Object.values(games).some(g => g.status === 'live')) return true;
+    const now = Date.now();
+    for (const g of weekGames()) {
+      const ko = kickoff(g);
+      if (!ko) continue;
+      const dt = now - ko.getTime();
+      if (dt < 0 || dt > 4 * 3600000) continue;
+      const phase = scoredPhase(g.home) || scoredPhase(g.away);
+      if (phase && phase.status === 'final') continue;
+      return true;
+    }
+    return false;
+  }
+  function msUntilNextKickoff() {
+    const now = Date.now();
+    let soon = Infinity;
+    for (const g of weekGames()) {
+      const ko = kickoff(g);
+      if (!ko) continue;
+      const dt = ko.getTime() - now;
+      if (dt > 0 && dt < soon) soon = dt;
+    }
+    return soon;
+  }
+  // 429 and other failures wait longer, doubling up to five minutes. Retry-After wins when it asks for more.
+  function nextBackoff(err) {
+    const prev = (T.live && T.live.backoff) > LIVE_MS ? T.live.backoff : LIVE_MS;
+    let ms = Math.min(BACKOFF_MAX, prev * 2);
+    if (err && err.retryAfterMs) ms = Math.min(BACKOFF_MAX, Math.max(ms, err.retryAfterMs));
+    if (err && err.status === 429 && ms < LIVE_MS * 2) ms = LIVE_MS * 2;
+    return ms;
+  }
+  function pollWait() {
+    if (document.visibilityState === 'hidden') return IDLE_MS;
+    if (gamesAreLive()) {
+      const backoff = T.live && T.live.backoff;
+      return backoff > LIVE_MS ? backoff : LIVE_MS;
+    }
+    return Math.max(1000, Math.min(IDLE_MS, msUntilNextKickoff()));
   }
   function indexMatchups(rows) {
     const out = {};
@@ -829,7 +890,111 @@
     }
     return out;
   }
+  function tickText(node, text) {
+    if (!node || node.textContent === text) return;
+    node.textContent = text;
+    node.classList.remove('is-tick');
+    void node.offsetWidth;
+    node.classList.add('is-tick');
+  }
+  function setStatus(cell, p) {
+    if (!cell) return;
+    if (!p) { cell.innerHTML = '<span class="sub">—</span>'; return; }
+    let badge = cell.querySelector('.live-status');
+    const label = (p.gamePhase && p.gamePhase.label) || 'Yet to play';
+    const cls = (p.gamePhase && p.gamePhase.status) || 'yet';
+    if (!badge) { cell.innerHTML = statusCell(p); return; }
+    if (badge.textContent !== label) badge.textContent = label;
+    badge.className = 'live-status ' + cls;
+  }
+  function syncLock(cell, p) {
+    if (!cell) return;
+    const flag = cell.querySelector('.flag.lock');
+    if (p && p.locked && !flag) {
+      const name = cell.querySelector('.name');
+      if (name) name.insertAdjacentHTML('beforeend', '<span class="flag lock" title="Game has started">Locked</span>');
+    } else if (flag && !(p && p.locked)) flag.remove();
+  }
+  function sameShape(mount, A) {
+    if (!mount.querySelector('.live-card')) return false;
+    const opp = !!A.opp;
+    if (!!mount.querySelector('[data-k="opp"]') !== opp) return false;
+    const rows = mount.querySelectorAll('tbody tr[data-i]');
+    const n = Math.max((A.myBasePlayers || []).length, opp ? A.opp.players.length : 0);
+    if (rows.length !== n) return false;
+    for (let i = 0; i < n; i++) {
+      const mine = (A.myBasePlayers || [])[i];
+      const other = opp ? A.opp.players[i] : null;
+      if (rows[i].getAttribute('data-me') !== ((mine && mine.key) || '')) return false;
+      if (opp && rows[i].getAttribute('data-opp') !== ((other && other.key) || '')) return false;
+    }
+    const card = mount.querySelector('#winprob-lineup');
+    const show = !!(A.winAdvice && A.winAdvice.show);
+    if (!!card !== show) return false;
+    if (show) {
+      const key = A.winAdvice.swaps.filter(s => s.start).map(s => (s.start.key || '') + '>' + (s.sit && s.sit.key || '')).join('|');
+      if (card.getAttribute('data-swaps') !== key) return false;
+    }
+    if (!!mount.querySelector('.live-pill') !== gamesAreLive()) return false;
+    return true;
+  }
+  function patchLive(mount, A) {
+    const mine = A.myBasePlayers || [];
+    const actors = mine.map(toActor);
+    const side = A.mySide || WP.sideOf(actors);
+    const opp = A.opp;
+    const anyLive = gamesAreLive();
+    const err = mount.querySelector('#liveErr');
+    if (err) err.innerHTML = T.live && T.live.error ? `<div class="notice bad">Couldn't refresh Sleeper just now (${ML.esc(T.live.error)}). Showing the last lineup we could read.</div>` : '';
+    tickText(mount.querySelector('[data-k="mine"]'), opp ? ML.f1(side.live) : ML.f1(side.mean));
+    tickText(mount.querySelector('[data-k="mine-final"]'), ML.f1(side.mean));
+    if (opp) {
+      tickText(mount.querySelector('[data-k="wp"]'), ML.pct(opp.win));
+      tickText(mount.querySelector('[data-k="margin"]'), `${side.mean >= opp.side.mean ? 'up' : 'down'} ${ML.f1(Math.abs(side.mean - opp.side.mean))}`);
+      tickText(mount.querySelector('[data-k="opp"]'), ML.f1(opp.side.live));
+      tickText(mount.querySelector('[data-k="opp-final"]'), ML.f1(opp.side.mean));
+    }
+    mount.querySelectorAll('tbody tr[data-i]').forEach((row, i) => {
+      const p = mine[i];
+      tickText(row.querySelector('[data-k="me-pts"]'), liveNum(p));
+      tickText(row.querySelector('[data-k="me-final"]'), finalNum(actors[i]));
+      setStatus(row.querySelector('[data-k="me-st"]'), p);
+      syncLock(row.querySelector('td.who'), p);
+      if (!opp) return;
+      const o = opp.players[i];
+      tickText(row.querySelector('[data-k="opp-pts"]'), liveNum(o));
+      setStatus(row.querySelector('[data-k="opp-st"]'), o);
+      syncLock(row.querySelectorAll('td.who')[1], o);
+    });
+    const note = mount.querySelector('[data-k="note"]');
+    if (note) note.textContent = liveCadence(anyLive);
+    if (A.winAdvice && A.winAdvice.show) {
+      const line = mount.querySelector('.wp-line');
+      if (line) line.textContent = adviceSentence(A.winAdvice);
+    }
+  }
+  function paintLive() {
+    const el = view();
+    const mount = el && $('#liveMount', el);
+    if (!mount || !T.league || !T.teamId) return;
+    const A = analyze(T.league, T.teamId, { waivers: false });
+    if (!A) return;
+    if (sameShape(mount, A)) patchLive(mount, A);
+    else {
+      mount.innerHTML = liveBlock(A, T.league);
+      $$('[data-ml]', mount).forEach(n => n.addEventListener('click', () => ML.openPlayer(n.dataset.ml)));
+    }
+    $$('.kpi', el).forEach(k => {
+      const label = $('.k', k);
+      if (label && label.textContent === 'Win probability' && A.opp) tickText($('.v', k), ML.pct(A.opp.win));
+    });
+  }
   async function refreshLive(opts) {
+    if (liveFlight) return liveFlight;
+    liveFlight = refreshLiveNow(opts).finally(() => { liveFlight = null; });
+    return liveFlight;
+  }
+  async function refreshLiveNow(opts) {
     const L = T.league;
     if (!L || L.source !== 'sleeper' || !ML) return;
     const week = ML.state.week;
@@ -839,31 +1004,19 @@
         getJSON(`https://api.sleeper.app/v1/league/${L.id}/matchups/${week}`),
         getJSON(`https://api.sleeper.app/scores/nfl/regular/${season}/${week}`),
       ]);
-      T.live = { at: Date.now(), byRoster: indexMatchups(matchups), games: indexGames(scores), error: null };
+      T.live = { at: Date.now(), byRoster: indexMatchups(matchups), games: indexGames(scores), error: null, backoff: 0 };
     } catch (e) {
-      T.live = Object.assign({}, T.live, { error: e.message || 'request failed', at: (T.live && T.live.at) || Date.now() });
+      T.live = Object.assign({}, T.live, {
+        error: e.message || 'request failed',
+        at: (T.live && T.live.at) || Date.now(),
+        backoff: nextBackoff(e),
+      });
     }
     if (!(opts && opts.silent) && ML.state && ML.state.view === 'team') paintLive();
   }
-  function paintLive() {
-    const el = view();
-    const mount = el && $('#liveMount', el);
-    if (!mount || !T.league || !T.teamId) return;
-    const A = analyze(T.league, T.teamId);
-    if (!A) return;
-    mount.innerHTML = liveBlock(A, T.league);
-    $$('[data-ml]', mount).forEach(n => n.addEventListener('click', () => ML.openPlayer(n.dataset.ml)));
-    $$('.kpi', el).forEach(k => {
-      const label = $('.k', k);
-      if (label && label.textContent === 'Win probability' && A.opp) {
-        const v = $('.v', k);
-        if (v) v.textContent = ML.pct(A.opp.win);
-      }
-    });
-  }
   function armPoll(delay) {
     if (pollTimer) clearTimeout(pollTimer);
-    const wait = delay != null ? delay : (gamesAreLive() && document.visibilityState === 'visible' ? LIVE_MS : IDLE_MS);
+    const wait = delay != null ? delay : pollWait();
     pollTimer = setTimeout(async () => {
       pollTimer = 0;
       if (document.visibilityState === 'hidden') { armPoll(IDLE_MS); return; }
@@ -874,9 +1027,9 @@
   function onLiveVisibility() {
     if (document.visibilityState !== 'visible') return;
     if (!T.league || T.league.source !== 'sleeper' || !T.teamId) return;
+    if (gamesAreLive()) { refreshLive().finally(() => armPoll()); return; }
     const age = T.live && T.live.at ? Date.now() - T.live.at : Infinity;
-    const due = gamesAreLive() ? age >= LIVE_MS : age >= IDLE_MS;
-    if (due) refreshLive().finally(() => armPoll());
+    if (age >= IDLE_MS) refreshLive().finally(() => armPoll());
     else armPoll();
   }
   document.addEventListener('visibilitychange', onLiveVisibility);

@@ -48,9 +48,9 @@
   if (splashOff) root.setAttribute('data-splash', 'off');
 })();
 </script>
-<script src="chants.js?v=d26d4a7bed"></script>
-<link rel="stylesheet" href="styles.css?v=d26d4a7bed" />
-<link rel="stylesheet" href="themes.css?v=d26d4a7bed" />
+<script src="chants.js?v=1834d421b0"></script>
+<link rel="stylesheet" href="styles.css?v=1834d421b0" />
+<link rel="stylesheet" href="themes.css?v=1834d421b0" />
 </head>
 <body>
 <div id="splash" class="splash">
@@ -352,7 +352,7 @@
         <article class="card">
           <h2 class="card-title">Data</h2>
           <p>Stats come from the open-source <a href="https://github.com/nflverse/nflverse-data/releases" target="_blank" rel="noopener">nflverse</a> releases: weekly player and team stats, play-by-play, snap counts, Next Gen Stats, Pro Football Reference advanced stats, schedule lines and injury reports. Expected points come from <a href="https://github.com/ffverse/ffopportunity" target="_blank" rel="noopener">ffopportunity</a>. Spreads, totals and player-prop lines come from DraftKings through ESPN's public odds feed. A free GitHub Actions workflow rebuilds all data every 3 hours. ESPN's feed has no anytime-TD prices, so the anytime-TD market shows "No line" when that's the source. Any metric that isn't available shows as "Unavailable" or "No line". Generated <span id="genStamp"></span>. Projections cover regular-season games only; byes show as no game.</p>
-          <p style="margin-top:var(--space-3)">My Team reads leagues read-only from Sleeper's public API and ESPN's public-league API, straight from your browser. Nothing is stored on a server; your league link lives in the page URL so you can bookmark it. While games are live and the tab is open, a Sleeper league polls that league's public matchups about once a minute for starter points. Otherwise it checks about every 30 minutes. Win chance treats each starter as a normal centered on the projection, with the floor-to-ceiling spread already on the player, and shrinks the leftover spread by how much of the game is left. The win-probability suggestion is a different lineup from the one that maximizes expected points, and it only appears when the swap moves the win chance by at least 2 points. A player whose game has started cannot be swapped.</p>
+          <p style="margin-top:var(--space-3)">My Team reads leagues read-only from Sleeper's public API and ESPN's public-league API, straight from your browser. Nothing is stored on a server; your league link lives in the page URL so you can bookmark it. While games are live and the tab is open, a Sleeper league polls that league's public matchups about every 30 seconds for starter points. Otherwise it checks about every 30 minutes. Win chance treats each starter as a normal centered on the projection, with the floor-to-ceiling spread already on the player, and shrinks the leftover spread by how much of the game is left. The win-probability suggestion is a different lineup from the one that maximizes expected points, and it only appears when the swap moves the win chance by at least 2 points. A player whose game has started cannot be swapped.</p>
         </article>
       </div>
       <article class="card glossary-card">
@@ -400,17 +400,17 @@
   </div>
 </div>
 
-<script>window.ML_VER="d26d4a7bed";</script>
-<script src="chart.umd.min.js?v=d26d4a7bed"></script>
-<script src="lineup.js?v=d26d4a7bed"></script>
-<script src="waiver.js?v=d26d4a7bed"></script>
-<script src="winprob.js?v=d26d4a7bed"></script>
-<script src="team.js?v=d26d4a7bed"></script>
-<script src="glossary.js?v=d26d4a7bed"></script>
-<script src="priors.js?v=d26d4a7bed"></script>
-<script src="model.js?v=d26d4a7bed"></script>
-<script src="trade.js?v=d26d4a7bed"></script>
-<script src="app.js?v=d26d4a7bed"></script>
+<script>window.ML_VER="1834d421b0";</script>
+<script src="chart.umd.min.js?v=1834d421b0"></script>
+<script src="lineup.js?v=1834d421b0"></script>
+<script src="waiver.js?v=1834d421b0"></script>
+<script src="winprob.js?v=1834d421b0"></script>
+<script src="team.js?v=1834d421b0"></script>
+<script src="glossary.js?v=1834d421b0"></script>
+<script src="priors.js?v=1834d421b0"></script>
+<script src="model.js?v=1834d421b0"></script>
+<script src="trade.js?v=1834d421b0"></script>
+<script src="app.js?v=1834d421b0"></script>
 <script>
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' });
 </script>
