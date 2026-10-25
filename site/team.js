@@ -9,6 +9,7 @@
 
   // ---------- Slots ----------
   const LUP = globalThis.MLLineup;
+  const WP = globalThis.MLWinProb;
   const ELIG = LUP.ELIG;
   const SLOT_LABEL = { QB: 'QB', RB: 'RB', WR: 'WR', TE: 'TE', K: 'K', DEF: 'DEF', FLEX: 'FLEX', SUPER_FLEX: 'SFLEX', WRRB_FLEX: 'W/R', REC_FLEX: 'W/T', DL: 'DL', LB: 'LB', DB: 'DB', DE: 'DE', DT: 'DT', CB: 'CB', S: 'S', IDP: 'IDP', IDP_FLEX: 'IDP' };
   const PRESETS = {
@@ -212,25 +213,89 @@
     const edt = (mo > 3 && mo < 11) || (mo === 3 && d >= secondSunMar) || (mo === 11 && d < firstSunNov);
     return new Date(`${g.date}T${g.time || '13:00'}:00${edt ? '-04:00' : '-05:00'}`);
   }
-  function evalPlayer(p0, S, week) {
+  function evalPlayer(p0, S, week, rosterId) {
     const p = p0.ml && p0.src !== 'espn' ? { ...p0, inj: (ML.injuryOf(p0.ml) || {}).status || null } : p0;
-    const r = { ...p, proj: null, pr: null, status: 'ok', note: '', value: 0, locked: false };
+    const r = { ...p, proj: null, pr: null, status: 'ok', note: '', value: 0, locked: false, livePts: null, gamePhase: null };
     if (p.ml && p.ml.tradeOnly) { r.status = 'np'; r.note = 'No weekly projection'; }
     else if (p.ml) {
       const pr = ML.project(p.ml, week, S);
       r.pr = pr;
       if (pr.bye) { r.status = 'bye'; r.note = 'Bye'; }
       else { r.proj = pr.pts; }
-      const game = pr.bye ? null : pr.game;
-      const ko = kickoff(game);
-      if (ko && ko.getTime() <= Date.now()) r.locked = true;
     } else if (p.pos === 'K' || p.pos === 'DEF') { r.status = 'np'; r.note = 'Not projected'; }
     else { r.status = 'np'; r.note = 'No projection (limited 2026 usage)'; }
     if (p.ir) { r.status = 'out'; r.note = 'IR slot'; }
     else if (p.inj && OUT_RE.test(String(p.inj).trim())) { r.status = 'out'; r.note = p.inj; }
     r.value = r.status === 'ok' ? Math.max(r.proj, 0.2) : r.status === 'np' ? 0.1 : -1;
     if (r.status === 'np' && (p.pos === 'K' || p.pos === 'DEF')) r.value = 0.1;
+    attachLive(r, rosterId);
     return r;
+  }
+  const TEAM_ALIAS = { LAR: 'LA', LA: 'LAR', WSH: 'WAS', WAS: 'WSH', JAC: 'JAX', JAX: 'JAC', NOR: 'NO', NO: 'NOR' };
+  function gameForTeam(team) {
+    const games = T.live && T.live.games;
+    if (!team || !games) return null;
+    return games[team] || games[TEAM_ALIAS[team]] || null;
+  }
+  function phaseFor(team, game) {
+    const live = gameForTeam(team);
+    if (live) return live;
+    const ko = kickoff(game);
+    if (!ko) return { status: 'yet', fraction: 1, label: 'Yet to play' };
+    const dt = Date.now() - ko.getTime();
+    if (dt < 0) return { status: 'yet', fraction: 1, label: 'Yet to play' };
+    if (dt > 4 * 3600000) return { status: 'final', fraction: 0, label: 'Final' };
+    return { status: 'live', fraction: Math.max(0, 1 - dt / (3.25 * 3600000)), label: 'In progress' };
+  }
+  function sleeperSid(key) {
+    const m = String(key || '').match(/^sl:(.+)$/);
+    return m ? m[1] : null;
+  }
+  function livePoints(rosterId, key) {
+    if (!T.live || !T.live.byRoster || rosterId == null) return null;
+    const row = T.live.byRoster[String(rosterId)];
+    if (!row) return null;
+    const sid = sleeperSid(key);
+    if (sid && row.players && Object.prototype.hasOwnProperty.call(row.players, sid)) {
+      const n = Number(row.players[sid]);
+      return Number.isFinite(n) ? n : 0;
+    }
+    if (sid && row.starters && row.startersPoints) {
+      const i = row.starters.indexOf(sid);
+      if (i >= 0 && row.startersPoints[i] != null) {
+        const n = Number(row.startersPoints[i]);
+        return Number.isFinite(n) ? n : 0;
+      }
+    }
+    return null;
+  }
+  function attachLive(r, rosterId) {
+    const game = r.pr && !r.pr.bye ? r.pr.game : null;
+    r.gamePhase = r.status === 'bye' ? { status: 'final', fraction: 0, label: 'Bye' } : phaseFor(r.team, game);
+    if ((r.status === 'ok' || r.status === 'np') && r.gamePhase.status !== 'yet') r.locked = true;
+    r.livePts = livePoints(rosterId, r.key);
+  }
+  function toActor(p) {
+    if (!p) return null;
+    const phase = p.gamePhase || { status: 'yet', fraction: 1, label: 'Yet to play' };
+    const projected = p.status === 'ok' && p.pr && p.pr.dist;
+    const prior = WP.positionPrior(p.pos);
+    const gone = p.status === 'out' || p.status === 'bye';
+    // A skill player we cannot project stays in the slot he already occupies.
+    // Bench him and the win chance is just the prior, which is not a real edge.
+    const unmodeled = p.status === 'np' && !['K', 'DEF'].includes(p.pos);
+    return {
+      key: p.key, pos: p.pos, name: p.name,
+      mean: projected ? (p.proj || 0) : (gone ? 0 : prior.mean),
+      sd: projected ? p.pr.dist.sd : (gone ? 0 : prior.sd),
+      floor: projected ? p.pr.floor : null,
+      ceil: projected ? p.pr.ceil : null,
+      live: p.livePts == null ? 0 : p.livePts,
+      fraction: phase.fraction,
+      locked: !!p.locked || unmodeled,
+      playable: p.status === 'ok' && !p.locked && phase.fraction >= 0.999 && !!projected,
+      phase, player: p,
+    };
   }
 
   function optimize(slots, roster, currentSlots) {
@@ -249,7 +314,7 @@
     if (!team) return null;
     const S = league.source === 'manual' ? ML.SCORING[ML.state.scoring] : league.S;
     const week = ML.state.week;
-    const roster = team.players.map(p => evalPlayer(p, S, week));
+    const roster = team.players.map(p => evalPlayer(p, S, week, team.id));
     const opt = optimize(league.slots, roster, team.currentSlots);
     // Keep current K / DEF / IDP picks when not projected (optimizer treats them equally)
     const UNPROJECTED = new Set(['K', 'DEF', 'DL', 'LB', 'DB', 'DE', 'DT', 'CB', 'S', 'IDP']);
@@ -292,12 +357,27 @@
     if (team.matchupId != null) {
       const ot = league.teams.find(t => t.id !== team.id && t.matchupId === team.matchupId);
       if (ot) {
-        const orost = ot.players.map(p => evalPlayer(p, S, week));
+        const orost = ot.players.map(p => evalPlayer(p, S, week, ot.id));
         const oopt = optimize(league.slots, orost, ot.currentSlots);
         const os = lineupStats(oopt);
-        const diff = optStats.mean - os.mean, sd = Math.sqrt(optStats.sd ** 2 + os.sd ** 2) || 1;
-        opp = { team: ot, stats: os, win: normCdf(diff / sd) };
+        const oppPlayers = ot.currentSlots && ot.currentSlots.length === league.slots.length
+          ? ot.currentSlots.map(c => (c && c.key ? orost.find(p => p.key === c.key) || null : null))
+          : oopt;
+        const oppActors = oppPlayers.map(toActor);
+        const oppSide = WP.sideOf(oppActors);
+        opp = { team: ot, roster: orost, players: oppPlayers, base: oppActors, stats: os, side: oppSide, opt: oopt };
       }
+    }
+    const myBasePlayers = current ? current.map(c => c.p || null) : opt.slice();
+    const myActors = myBasePlayers.map(toActor);
+    const mySide = WP.sideOf(myActors);
+    let winAdvice = null;
+    if (opp) {
+      opp.win = WP.winProb(mySide, opp.side);
+      winAdvice = WP.suggest({
+        slots: league.slots, current: myActors, roster: roster.map(toActor), opp: opp.side, elig: ELIG, minGain: 0.02,
+        altSeeds: [opt.map(p => (p ? toActor(p) : null))],
+      });
     }
 
     // Waiver targets: an available player is an add only when they out-value
@@ -328,7 +408,7 @@
         .filter(c => (perPos[c.e.pos] = (perPos[c.e.pos] || 0) + 1) <= 2)
         .slice(0, 6);
     }
-    return { team, roster, opt, current, bench, optStats, curStats, moves, opp, waivers, S };
+    return { team, roster, opt, current, bench, optStats, curStats, moves, opp, waivers, S, mySide, myBasePlayers, winAdvice };
   }
 
   // ---------- Rendering ----------
@@ -453,6 +533,100 @@
     return `<span class="sub">${p.status === 'np' ? '—' : '0.0'}</span>`;
   }
   function rangeCell(p) { return p && p.status === 'ok' ? `<span class="range"><span class="fl">${ML.f1(p.pr.floor)}</span><span class="rg-sep">–</span><span class="cl">${ML.f1(p.pr.ceil)}</span></span>` : ''; }
+  function ptClock(ms) {
+    try {
+      return new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit' }).format(ms) + ' PT';
+    } catch (e) { return ''; }
+  }
+  function liveNum(p) {
+    if (!p) return '—';
+    if (p.livePts == null && (!p.gamePhase || p.gamePhase.status === 'yet')) return '0.0';
+    if (p.livePts == null) return '—';
+    return ML.f1(p.livePts);
+  }
+  function finalNum(actor) {
+    if (!actor) return '—';
+    const part = WP.remain(actor);
+    return ML.f1(part.live + part.mean);
+  }
+  function statusCell(p) {
+    const phase = p && p.gamePhase || { status: 'yet', label: 'Yet to play' };
+    return `<span class="live-status ${ML.esc(phase.status)}">${ML.esc(phase.label || 'Yet to play')}</span>`;
+  }
+  function adviceSentence(w) {
+    const margin = w.oppMean - w.currentMean;
+    const by = ML.f1(Math.abs(margin));
+    const where = margin > 0.05 ? `You're projected to lose by ${by}` : margin < -0.05 ? `You're projected to win by ${by}` : `You're projected to finish even`;
+    const bits = w.swaps.filter(s => s.start).map(s => {
+      const ceil = s.start.ceil == null ? '' : ` (ceiling ${ML.f1(s.start.ceil)})`;
+      const floor = s.start.floor == null ? '' : ` (floor ${ML.f1(s.start.floor)})`;
+      const tag = w.underdog ? ceil : floor;
+      if (!s.sit) return `start ${s.start.name}${tag} in an empty slot`;
+      const other = w.underdog
+        ? (s.sit.floor == null ? '' : ` (floor ${ML.f1(s.sit.floor)})`)
+        : (s.sit.ceil == null ? '' : ` (ceiling ${ML.f1(s.sit.ceil)})`);
+      return `start ${s.start.name}${tag} over ${s.sit.name}${other}`;
+    });
+    const p0 = Math.round(w.currentProb * 100);
+    const p1 = Math.round(w.bestProb * 100);
+    return `${where} — ${bits.join('; ')}: win chance ${p0}% → ${p1}%`;
+  }
+  function liveRow(slot, p, actor) {
+    return `<td>${slotBadge(slot)}</td><td>${playerCell(p)}</td><td class="num">${liveNum(p)}</td><td>${p ? statusCell(p) : '<span class="sub">—</span>'}</td><td class="num">${finalNum(actor)}</td>`;
+  }
+  function liveBlock(A, L) {
+    const mine = A.myBasePlayers || [];
+    const actors = mine.map(toActor);
+    const opp = A.opp;
+    const side = A.mySide || WP.sideOf(actors);
+    const anyLive = T.live && T.live.games && Object.values(T.live.games).some(g => g.status === 'live');
+    const when = T.live && T.live.at ? `Updated ${ptClock(T.live.at)}` : (L.source === 'sleeper' ? 'Waiting on Sleeper' : 'From this week\'s projections');
+    const cadence = L.source === 'sleeper'
+      ? (anyLive ? 'Refreshes about every minute while a game is live and this tab is open.' : 'Refreshes about every 30 minutes until a game is live.')
+      : 'Live Sleeper points are available on Sleeper leagues. This view uses kickoff time for who is locked.';
+    const err = T.live && T.live.error ? `<div class="notice bad">Couldn't refresh Sleeper just now (${ML.esc(T.live.error)}). Showing the last lineup we could read.</div>` : '';
+    const board = opp ? `
+      <div class="live-board">
+        <div class="live-side"><div class="k">Your live total</div><div class="live-pts">${ML.f1(side.live)}</div><div class="sub">Proj final ${ML.f1(side.mean)}</div></div>
+        <div class="live-wp"><div class="k">Win chance</div><div class="v">${ML.pct(opp.win)}</div><div class="sub">${side.mean >= opp.side.mean ? 'up' : 'down'} ${ML.f1(Math.abs(side.mean - opp.side.mean))}</div></div>
+        <div class="live-side"><div class="k">${ML.esc(opp.team.name)}</div><div class="live-pts">${ML.f1(opp.side.live)}</div><div class="sub">Proj final ${ML.f1(opp.side.mean)}</div></div>
+      </div>` : `
+      <div class="live-board solo"><div class="live-side"><div class="k">Your projected total</div><div class="live-pts">${ML.f1(side.mean)}</div><div class="sub">No opponent is linked for this week</div></div></div>`;
+    const n = Math.max(mine.length, opp ? opp.players.length : 0);
+    const rows = [];
+    for (let i = 0; i < n; i++) {
+      const slot = L.slots[i] || '';
+      const p = mine[i];
+      const o = opp && opp.players[i];
+      rows.push(`<tr>${liveRow(slot, p, actors[i])}${opp ? `<td class="opp-cell">${playerCell(o)}</td><td class="num">${liveNum(o)}</td><td>${o ? statusCell(o) : '<span class="sub">—</span>'}</td>` : ''}</tr>`);
+    }
+    const head = opp
+      ? `<tr><th>Slot</th><th>Your starter</th><th class="num">Live</th><th>Status</th><th class="num">Proj final</th><th>Opponent</th><th class="num">Live</th><th>Status</th></tr>`
+      : `<tr><th>Slot</th><th>Starter</th><th class="num">Live</th><th>Status</th><th class="num">Proj final</th></tr>`;
+    const advice = A.winAdvice && A.winAdvice.show ? `
+      <div class="card" id="winprob-lineup">
+        <div class="card-title">Win-probability suggestion</div>
+        <p class="wp-line">${ML.esc(adviceSentence(A.winAdvice))}</p>
+        <div class="moves">${A.winAdvice.swaps.filter(s => s.start).map(s => {
+          const startTag = A.winAdvice.underdog ? (s.start.ceil == null ? '' : 'ceiling ' + ML.f1(s.start.ceil)) : (s.start.floor == null ? '' : 'floor ' + ML.f1(s.start.floor));
+          const sitTag = !s.sit ? '' : A.winAdvice.underdog ? (s.sit.floor == null ? '' : 'floor ' + ML.f1(s.sit.floor)) : (s.sit.ceil == null ? '' : 'ceiling ' + ML.f1(s.sit.ceil));
+          const startBit = startTag ? ` <span class="swap-proj">(${ML.esc(startTag)})</span>` : '';
+          const sitBit = sitTag ? ` <span class="swap-proj">(${ML.esc(sitTag)})</span>` : '';
+          return `<div class="move"><div class="swap-in"><span class="mv in">Start</span> <b>${ML.esc(s.start.name)}</b>${startBit}</div><div class="swap-out">${s.sit ? `<span class="mv out">Bench</span> <b>${ML.esc(s.sit.name)}</b>${sitBit}` : '<span class="mv out">Empty</span> <b>open slot</b>'}</div><div class="mv-why">${A.winAdvice.underdog ? 'Raises the ceiling while you are behind' : 'Raises the floor while you are ahead'}</div></div>`;
+        }).join('')}</div>
+        <p class="sub">This is separate from the optimal lineup below, which still maximizes expected points. A player whose game has started stays put.</p>
+      </div>` : '';
+    return `
+      ${err}
+      <div class="card live-card">
+        <div class="live-head"><div class="card-title">Live matchup</div><div class="sub">${ML.esc(when)}</div></div>
+        ${board}
+        <div class="tscroll"><table class="team-table live-table"><thead>${head}</thead><tbody>${rows.join('') || '<tr class="empty-row"><td colspan="8">No starters set.</td></tr>'}</tbody></table></div>
+        <p class="sub live-note">${ML.esc(cadence)} Proj final is live points plus the share of the projection still left on the clock.</p>
+      </div>
+      ${advice}`;
+  }
+
   function swapRow(p) {
     const inn = `<div class="swap-in"><span class="mv in">Start</span> <b>${ML.esc(p.startName)}</b> <span class="swap-proj">(${ML.esc(p.startProj)})</span></div>`;
     const out = p.kind === 'empty'
@@ -475,7 +649,7 @@
         <div class="kpi"><div class="k">Optimal lineup</div><div class="v">${ML.f1(A.optStats.mean)}</div><div class="s">projected pts · Week ${week}</div></div>
         ${A.curStats ? `<div class="kpi"><div class="k">Current lineup</div><div class="v">${ML.f1(A.curStats.mean)}</div><div class="s">as set in ${L.source === 'sleeper' ? 'Sleeper' : 'ESPN'}</div></div>
         <div class="kpi ${gain > 0.05 ? 'up' : ''}"><div class="k">Gain from changes</div><div class="v">${gain > 0.05 ? '+' + ML.f1(gain) : '0.0'}</div><div class="s">${swaps.length ? swaps.length + ' swap' + (swaps.length > 1 ? 's' : '') + ' suggested' : 'Lineup already optimal'}</div></div>` : ''}
-        ${A.opp ? `<div class="kpi"><div class="k">Win probability</div><div class="v">${ML.pct(A.opp.win)}</div><div class="s">vs ${ML.esc(A.opp.team.name)} (${ML.f1(A.opp.stats.mean)})</div></div>` : ''}
+        ${A.opp ? `<div class="kpi"><div class="k">Win probability</div><div class="v">${ML.pct(A.opp.win)}</div><div class="s">current lineup vs ${ML.esc(A.opp.team.name)}</div></div>` : ''}
       </div>`;
 
     const sleeperLinks = L.source === 'sleeper' ? LUP.sleeperTeamLinks(L.id) : null;
@@ -537,6 +711,7 @@
         <div class="team-actions">${teamSel}<button class="btn ghost" type="button" id="changeLeague">${T.showConnect ? 'Hide' : 'Change league'}</button></div>
       </div>
       ${kpis}
+      <div id="liveMount">${liveBlock(A, L)}</div>
       ${movesCard}
       <div class="grid-team">${lineupCard}${benchCard}</div>
       ${waiverCard}
@@ -631,13 +806,90 @@
     }, 900);
   }
 
+  const LIVE_MS = 60 * 1000;
+  const IDLE_MS = 30 * 60 * 1000;
+  let pollTimer = 0;
+  function gamesAreLive() {
+    return !!(T.live && T.live.games && Object.values(T.live.games).some(g => g.status === 'live'));
+  }
+  function indexMatchups(rows) {
+    const out = {};
+    for (const m of rows || []) {
+      out[String(m.roster_id)] = { points: Number(m.points) || 0, players: m.players_points || {}, starters: m.starters || [], startersPoints: m.starters_points || [] };
+    }
+    return out;
+  }
+  function indexGames(scores) {
+    const out = {};
+    for (const s of scores || []) {
+      const meta = s.metadata || {};
+      const phase = WP.phaseFromScore(s);
+      if (meta.home_team) out[meta.home_team] = phase;
+      if (meta.away_team) out[meta.away_team] = phase;
+    }
+    return out;
+  }
+  async function refreshLive(opts) {
+    const L = T.league;
+    if (!L || L.source !== 'sleeper' || !ML) return;
+    const week = ML.state.week;
+    const season = (ML.state.data && ML.state.data.meta && ML.state.data.meta.season) || SEASON;
+    try {
+      const [matchups, scores] = await Promise.all([
+        getJSON(`https://api.sleeper.app/v1/league/${L.id}/matchups/${week}`),
+        getJSON(`https://api.sleeper.app/scores/nfl/regular/${season}/${week}`),
+      ]);
+      T.live = { at: Date.now(), byRoster: indexMatchups(matchups), games: indexGames(scores), error: null };
+    } catch (e) {
+      T.live = Object.assign({}, T.live, { error: e.message || 'request failed', at: (T.live && T.live.at) || Date.now() });
+    }
+    if (!(opts && opts.silent) && ML.state && ML.state.view === 'team') paintLive();
+  }
+  function paintLive() {
+    const el = view();
+    const mount = el && $('#liveMount', el);
+    if (!mount || !T.league || !T.teamId) return;
+    const A = analyze(T.league, T.teamId);
+    if (!A) return;
+    mount.innerHTML = liveBlock(A, T.league);
+    $$('[data-ml]', mount).forEach(n => n.addEventListener('click', () => ML.openPlayer(n.dataset.ml)));
+    $$('.kpi', el).forEach(k => {
+      const label = $('.k', k);
+      if (label && label.textContent === 'Win probability' && A.opp) {
+        const v = $('.v', k);
+        if (v) v.textContent = ML.pct(A.opp.win);
+      }
+    });
+  }
+  function armPoll(delay) {
+    if (pollTimer) clearTimeout(pollTimer);
+    const wait = delay != null ? delay : (gamesAreLive() && document.visibilityState === 'visible' ? LIVE_MS : IDLE_MS);
+    pollTimer = setTimeout(async () => {
+      pollTimer = 0;
+      if (document.visibilityState === 'hidden') { armPoll(IDLE_MS); return; }
+      if (T.league && T.league.source === 'sleeper' && T.teamId) await refreshLive();
+      armPoll();
+    }, wait);
+  }
+  function onLiveVisibility() {
+    if (document.visibilityState !== 'visible') return;
+    if (!T.league || T.league.source !== 'sleeper' || !T.teamId) return;
+    const age = T.live && T.live.at ? Date.now() - T.live.at : Infinity;
+    const due = gamesAreLive() ? age >= LIVE_MS : age >= IDLE_MS;
+    if (due) refreshLive().finally(() => armPoll());
+    else armPoll();
+  }
+  document.addEventListener('visibilitychange', onLiveVisibility);
+
   async function loadSleeper(lid, teamId) {
     T.loading = true; T.error = null; render();
     try {
       const L = await sleeperLoadLeague(lid, T.sleeperUser?.user_id);
       T.league = L; T.teamId = teamId && L.teams.some(t => t.id === teamId) ? teamId : L.defaultTeamId; T.showConnect = false; setHash();
+      await refreshLive({ silent: true });
     } catch (err) { T.error = `Couldn't load that Sleeper league: ${err.message}`; }
     T.loading = false; render();
+    if (T.league && T.league.source === 'sleeper') armPoll();
   }
   async function loadEspn(lid, teamId) {
     T.loading = true; T.error = null; render();
