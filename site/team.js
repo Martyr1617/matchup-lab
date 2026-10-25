@@ -610,7 +610,9 @@
         <div class="moves">${A.winAdvice.swaps.filter(s => s.start).map(s => {
           const startTag = A.winAdvice.underdog ? (s.start.ceil == null ? '' : 'ceiling ' + ML.f1(s.start.ceil)) : (s.start.floor == null ? '' : 'floor ' + ML.f1(s.start.floor));
           const sitTag = !s.sit ? '' : A.winAdvice.underdog ? (s.sit.floor == null ? '' : 'floor ' + ML.f1(s.sit.floor)) : (s.sit.ceil == null ? '' : 'ceiling ' + ML.f1(s.sit.ceil));
-          return `<div class="move"><div class="swap-in"><span class="mv in">Start</span> <b>${ML.esc(s.start.name)}</b> <span class="swap-proj">(${ML.esc(startTag)})</span></div><div class="swap-out">${s.sit ? `<span class="mv out">Bench</span> <b>${ML.esc(s.sit.name)}</b> <span class="swap-proj">(${ML.esc(sitTag)})</span>` : '<span class="mv out">Empty</span> <b>open slot</b>'}</div><div class="mv-why">${A.winAdvice.underdog ? 'Raises the ceiling while you are behind' : 'Raises the floor while you are ahead'}</div></div>`;
+          const startBit = startTag ? ` <span class="swap-proj">(${ML.esc(startTag)})</span>` : '';
+          const sitBit = sitTag ? ` <span class="swap-proj">(${ML.esc(sitTag)})</span>` : '';
+          return `<div class="move"><div class="swap-in"><span class="mv in">Start</span> <b>${ML.esc(s.start.name)}</b>${startBit}</div><div class="swap-out">${s.sit ? `<span class="mv out">Bench</span> <b>${ML.esc(s.sit.name)}</b>${sitBit}` : '<span class="mv out">Empty</span> <b>open slot</b>'}</div><div class="mv-why">${A.winAdvice.underdog ? 'Raises the ceiling while you are behind' : 'Raises the floor while you are ahead'}</div></div>`;
         }).join('')}</div>
         <p class="sub">This is separate from the optimal lineup below, which still maximizes expected points. A player whose game has started stays put.</p>
       </div>` : '';
