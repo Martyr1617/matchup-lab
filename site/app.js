@@ -1167,14 +1167,15 @@
     if (weekLabel && state.view === 'board') weekLabel.textContent = `Week ${state.week}`;
   }
   function renderCurrent() {
-    const v = state.view;
-    if (v === 'board') renderBoard();
-    else if (v === 'defense') renderDefense();
-    else if (v === 'player' && state.player) renderPlayer(state.player);
-    else if (v === 'team' && window.MLTeam) window.MLTeam.render();
-    else if (v === 'compare') renderCompare();
-    else if (v === 'news') renderNews();
-    else if (v === 'trade' && window.MLTrade) window.MLTrade.render();
+    // Every tab reads the data this refresh just loaded, including a tab that
+    // is hidden. My Team's render uses the roster reloadLeague already fetched.
+    if (window.MLTeam && window.MLTeam.render) window.MLTeam.render();
+    renderBoard();
+    renderDefense();
+    if (state.player) renderPlayer(state.player);
+    renderCompare();
+    renderNews();
+    if (window.MLTrade && window.MLTrade.render) window.MLTrade.render();
     const stamp = $('#genStamp');
     if (stamp && state.data && state.data.meta) stamp.textContent = state.data.meta.generated;
   }
@@ -1472,6 +1473,7 @@
     const q = '?t=' + Date.now() + '&fresh=1';
     const previous = state.data;
     let refreshed = false;
+    let dataReady = false;
     let mode = 'fail';
     try {
       const d = await fetchJson(REMOTE + 'data.json' + q, 12000, true);
@@ -1497,17 +1499,27 @@
       indexNews();
       if (window.MLTrade) window.MLTrade.ensure(state.data);
       noteDataFreshness(state.data, 'remote');
+      dataReady = true;
+      let roster = true;
       if (booted) {
         fillWeeks(true);
-        if (!(silent && userIsEditing())) renderCurrent();
+        // Opening the app loads the Sleeper roster. The button used to skip
+        // that and redraw the lineup already in memory, so a change on Sleeper
+        // stayed put until the app was closed. Reload it the same way, unless
+        // a connect field is mid-edit.
+        if (!(silent && userIsEditing()) && window.MLTeam && window.MLTeam.reload) {
+          roster = await window.MLTeam.reload();
+        }
+        if (roster !== false && !(silent && userIsEditing())) renderCurrent();
         loadPracticeReports();
       } else {
         startUi();
       }
       const beforeGen = previous && previous.meta && previous.meta.generated;
       const afterGen = state.data.meta && state.data.meta.generated;
-      mode = beforeGen && beforeGen === afterGen ? 'same' : 'ok';
-      refreshed = true;
+      // A lineup can change while the projection file is unchanged. Say so.
+      mode = roster === false ? 'fail' : roster === 'league' || !(beforeGen && beforeGen === afterGen) ? 'ok' : 'same';
+      refreshed = roster !== false;
       const wait = silent ? 0 : 800 - (Date.now() - started);
       if (wait > 0) await new Promise(r => setTimeout(r, wait));
       if (!silent) paintRefreshStatus(mode);
@@ -1526,8 +1538,8 @@
     }
     if (refreshed && silent && userIsEditing()) {
       if (!document.hidden) armAutoRefresh(EDIT_RETRY_MS);
-    } else if (refreshed) {
-      await activateWaitingApp(silent ? '' : mode);
+    } else if (dataReady) {
+      await activateWaitingApp(refreshed && !silent ? mode : '');
     }
   }
   function bindRefresh() {

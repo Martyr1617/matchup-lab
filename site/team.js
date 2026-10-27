@@ -81,8 +81,12 @@
   }
 
   // ---------- Fetch helpers ----------
+  // Sleeper marks roster JSON public with a 5-minute shared cache. A normal
+  // fetch can replay that response. A fresh load bypasses the browser cache
+  // and changes the URL so the CDN cannot either.
   async function getJSON(url) {
-    const r = await fetch(url);
+    const join = url.includes('?') ? '&' : '?';
+    const r = await fetch(url + join + '_=' + Date.now(), { cache: 'reload', credentials: 'omit' });
     if (!r.ok) {
       const e = new Error(`HTTP ${r.status}`);
       e.status = r.status;
@@ -990,11 +994,14 @@
     });
   }
   async function refreshLive(opts) {
-    if (liveFlight) return liveFlight;
-    liveFlight = refreshLiveNow(opts).finally(() => { liveFlight = null; });
-    return liveFlight;
+    // A lineup reload must not reuse a request that started with the old starters.
+    if (liveFlight && !(opts && opts.fresh)) return liveFlight;
+    const run = refreshLiveNow(opts).finally(() => { if (liveFlight === run) liveFlight = null; });
+    liveFlight = run;
+    return run;
   }
   async function refreshLiveNow(opts) {
+    const epoch = leagueEpoch;
     const L = T.league;
     if (!L || L.source !== 'sleeper' || !ML) return;
     const week = ML.state.week;
@@ -1004,8 +1011,10 @@
         getJSON(`https://api.sleeper.app/v1/league/${L.id}/matchups/${week}`),
         getJSON(`https://api.sleeper.app/scores/nfl/regular/${season}/${week}`),
       ]);
+      if (epoch !== leagueEpoch || T.league !== L) return;
       T.live = { at: Date.now(), byRoster: indexMatchups(matchups), games: indexGames(scores), error: null, backoff: 0 };
     } catch (e) {
+      if (epoch !== leagueEpoch || T.league !== L) return;
       T.live = Object.assign({}, T.live, {
         error: e.message || 'request failed',
         at: (T.live && T.live.at) || Date.now(),
@@ -1034,23 +1043,104 @@
   }
   document.addEventListener('visibilitychange', onLiveVisibility);
 
+  // Bumped whenever a new roster load starts, so a slower older request cannot
+  // write the starters the user already replaced.
+  let leagueEpoch = 0;
   async function loadSleeper(lid, teamId) {
+    const epoch = ++leagueEpoch;
     T.loading = true; T.error = null; render();
     try {
       const L = await sleeperLoadLeague(lid, T.sleeperUser?.user_id);
+      if (epoch !== leagueEpoch) return;
       T.league = L; T.teamId = teamId && L.teams.some(t => t.id === teamId) ? teamId : L.defaultTeamId; T.showConnect = false; setHash();
-      await refreshLive({ silent: true });
-    } catch (err) { T.error = `Couldn't load that Sleeper league: ${err.message}`; }
+      await refreshLive({ silent: true, fresh: true });
+    } catch (err) {
+      if (epoch !== leagueEpoch) return;
+      T.error = `Couldn't load that Sleeper league: ${err.message}`;
+    }
+    if (epoch !== leagueEpoch) return;
     T.loading = false; render();
     if (T.league && T.league.source === 'sleeper') armPoll();
   }
   async function loadEspn(lid, teamId) {
+    const epoch = ++leagueEpoch;
     T.loading = true; T.error = null; render();
     try {
       const L = await espnLoadLeague(lid);
+      if (epoch !== leagueEpoch) return;
       T.league = L; T.teamId = teamId && L.teams.some(t => t.id === teamId) ? teamId : (L.teams.length === 1 ? L.teams[0].id : null); T.showConnect = false; setHash();
-    } catch (err) { T.error = err.message.startsWith('HTTP') || err.message.includes('fetch') ? `Couldn't reach ESPN: ${err.message}` : err.message; }
+    } catch (err) {
+      if (epoch !== leagueEpoch) return;
+      T.error = err.message.startsWith('HTTP') || err.message.includes('fetch') ? `Couldn't reach ESPN: ${err.message}` : err.message;
+    }
+    if (epoch !== leagueEpoch) return;
     T.loading = false; render();
+  }
+  // Same reads as opening the page: user, league, rosters, and matchups.
+  // The previous lineup object is dropped. Saved teams in localStorage are only
+  // the route (league and team id), never a roster, so they are not a source.
+  async function reloadLeague() {
+    if (!ML) return false;
+    const epoch = ++leagueEpoch;
+    idx = buildIndex();
+    const L = T.league;
+    if (!L) return true;
+    const tid = T.teamId;
+    try {
+      if (L.source === 'sleeper') {
+        const name = T.sleeperUser && (T.sleeperUser.username || T.sleeperUser.display_name);
+        if (name) {
+          try {
+            const found = await sleeperFindLeagues(name);
+            if (epoch !== leagueEpoch) return true;
+            T.sleeperUser = found.user;
+            T.sleeperLeagues = found.leagues;
+          } catch (e) { /* the roster request below is the one the lineup needs */ }
+        }
+        const next = await sleeperLoadLeague(L.id, T.sleeperUser && T.sleeperUser.user_id);
+        if (epoch !== leagueEpoch) return true;
+        T.live = null;
+        T.league = next;
+        T.teamId = tid && next.teams.some(t => t.id === tid) ? tid : next.defaultTeamId;
+        T.error = null;
+        T.showConnect = false;
+        lastWeek = ML.state.week;
+        setHash();
+        render();
+        await refreshLive({ fresh: true });
+        if (epoch !== leagueEpoch) return true;
+        if (T.league && T.league.source === 'sleeper') armPoll();
+        return 'league';
+      }
+      if (L.source === 'espn') {
+        const next = await espnLoadLeague(L.id);
+        if (epoch !== leagueEpoch) return true;
+        T.live = null;
+        T.league = next;
+        T.teamId = tid && next.teams.some(t => t.id === tid) ? tid : (next.teams.length === 1 ? next.teams[0].id : null);
+        T.error = null;
+        T.showConnect = false;
+        lastWeek = ML.state.week;
+        setHash();
+        render();
+        return 'league';
+      }
+      const next = manualLeague(T.manualText, T.manualPreset);
+      if (epoch !== leagueEpoch) return true;
+      if (next.teams[0].players.length) {
+        T.league = next;
+        T.teamId = 'me';
+        T.error = null;
+        setHash();
+      }
+      render();
+      return 'league';
+    } catch (err) {
+      if (epoch !== leagueEpoch) return true;
+      T.error = `Couldn't refresh that lineup: ${err.message}`;
+      render();
+      return false;
+    }
   }
 
   // Reload league data when the week changes (matchups differ per week)
@@ -1106,5 +1196,5 @@
     else render();
   }
 
-  window.MLTeam = { init, render: onRender, rosterIds, _analyze: (...a) => analyze(...a), _T: T };
+  window.MLTeam = { init, render: onRender, rosterIds, reload: reloadLeague, _analyze: (...a) => analyze(...a), _T: T };
 })();
