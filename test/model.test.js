@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { lgamma, makeDist, project, fullWorkload, normName, propMean, PREDICTIVE_SPREAD, SNAP_BLEND, outcomeFloor, HEALTHY_SPREAD, ROLE_FLOOR_N, FULL_WORK_GAP, FULL_WORK_RATIO } = require('../site/model');
+const fs = require('node:fs');
+const { lgamma, makeDist, project, fullWorkload, normName, propMean, PREDICTIVE_SPREAD, SNAP_BLEND, outcomeFloor, HEALTHY_SPREAD, ROLE_FLOOR_N, FULL_WORK_GAP, FULL_WORK_RATIO, regRole } = require('../site/model');
 
 function factors() {
   return { rush_att: 1, ypc: 1, rush_td: 1, pass_att: 1, comp_pct: 1, ypa: 1, pass_td: 1, int: 1 };
@@ -341,4 +342,67 @@ test('full workload is a second number and does not change the official projecti
   assert.ok(halfFull && halfFull.pts !== official.pts);
   assert.ok(halfFull.pts > halfOff.pts);
   assert.equal(project(hurt, 6, 'ppr', e).pts, official.pts);
+});
+
+function roleEnv(players, chart, out) {
+  const schedule = {};
+  for (let w = 1; w <= 7; w++) schedule[w] = [{ home: 'CHI', away: 'GB', id: 'g' + w }];
+  return {
+    data: {
+      players,
+      schedule,
+      roles: { 8: { out: out || [], chart: { CHI: chart } } },
+    },
+  };
+}
+function logGame(wk, extra) {
+  return { wk, pa: 0, ca: 0, tg: 0, sp: 0, ...extra };
+}
+
+test('regression lists keep the starting quarterback and drop a backup who is not playing', () => {
+  const starter = {
+    id: 'qb-start', name: 'Caleb Williams', pos: 'QB', team: 'CHI',
+    log: [5, 6, 7].map(wk => logGame(wk, { pa: 32, sp: 1 })),
+  };
+  const backup = {
+    id: 'qb-backup', name: 'Tyson Bagent', pos: 'QB', team: 'CHI',
+    log: [logGame(4, { pa: 34, sp: 1 }), logGame(5, { pa: 21, sp: 0.67 })],
+  };
+  const data = roleEnv([starter, backup], { QB: ['qb-start', 'qb-backup'] }).data;
+  assert.equal(regRole(starter, 8, data), true);
+  assert.equal(regRole(backup, 8, data), false);
+  const promoted = roleEnv([starter, backup], { QB: ['qb-start', 'qb-backup'] }, ['qb-start']).data;
+  assert.equal(regRole(backup, 8, promoted), false);
+  backup.log.push(logGame(7, { pa: 28, sp: 0.92 }));
+  const nowStarting = roleEnv([
+    { ...starter, inj: { status: 'Out' } },
+    backup,
+  ], { QB: ['qb-start', 'qb-backup'] }).data;
+  assert.equal(regRole(backup, 8, nowStarting), true);
+});
+
+test('regression lists drop players who are out and garbage-time or deep-chart cameos', () => {
+  const out = { id: 'wr-out', name: 'Out Wide', pos: 'WR', team: 'CHI', inj: { status: 'IR' }, log: [6, 7].map(wk => logGame(wk, { tg: 8, sp: 0.8 })) };
+  const garbage = { id: 'wr-junk', name: 'Garbage Wide', pos: 'WR', team: 'CHI', log: [logGame(6, { tg: 1, sp: 0.08 }), logGame(7, { tg: 2, sp: 0.12 })] };
+  const deep = { id: 'rb-deep', name: 'Deep Back', pos: 'RB', team: 'CHI', log: [logGame(6, { ca: 11, tg: 4, sp: 0.55 })] };
+  const committee = {
+    id: 'rb-two', name: 'Committee Back', pos: 'RB', team: 'CHI',
+    log: [logGame(6, { ca: 12, tg: 3, sp: 0.6 }), logGame(7, { ca: 9, tg: 2, sp: 0.48 })],
+  };
+  const data = roleEnv(
+    [out, garbage, deep, committee],
+    { WR: ['wr-other', 'wr-junk', 'wr-out'], RB: ['rb-1', 'rb-two', 'rb-deep'] },
+  ).data;
+  assert.equal(regRole(out, 8, data), false);
+  assert.equal(regRole(garbage, 8, data), false);
+  assert.equal(regRole(deep, 8, data), false);
+  assert.equal(regRole(committee, 8, data), true);
+  deep.log.push(logGame(7, { ca: 10, tg: 3, sp: 0.5 }));
+  assert.equal(regRole(deep, 8, data), true);
+});
+
+test('the regression cards use the playing-role filter', () => {
+  const app = fs.readFileSync(require('node:path').join(__dirname, '../site/app.js'), 'utf8');
+  assert.match(app, /MLModel\.regRole\(r\.pl, week, state\.data\)/);
+  assert.match(app, /garbage-time cameos are left off/);
 });

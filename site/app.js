@@ -650,7 +650,8 @@
   }
 
   function renderRegression(week) {
-    const all = rankedPlayers(week, state.scoring, state.pos).filter(r => r.pl.g >= 2 && r.pr.pts >= 8);
+    const playing = r => window.MLModel.regRole(r.pl, week, state.data);
+    const all = rankedPlayers(week, state.scoring, state.pos).filter(r => r.pl.g >= 2 && r.pr.pts >= 8 && playing(r));
     const buys = all.filter(r => r.pr.reg && r.pr.reg.type === 'buy').sort((a, b) => a.pl.adv.fpoe_pg - b.pl.adv.fpoe_pg).slice(0, 8);
     const fades = all.filter(r => r.pr.reg && r.pr.reg.type === 'fade').sort((a, b) => b.pl.adv.fpoe_pg - a.pl.adv.fpoe_pg).slice(0, 8);
     const li = ({ pl, pr }) => `<li data-id="${esc(pl.id)}" tabindex="0"><span class="pos ${pl.pos}">${pl.pos}</span> <b>${esc(pl.name)}</b> <span class="meta">${esc(pl.team)} · proj ${f1(pr.pts)}</span><div class="why">${esc(pr.reg.why)}${pr.vg ? ` · ITT ${f1(pr.vg.itt)}` : ''}</div></li>`;
@@ -658,7 +659,7 @@
     el.innerHTML = `<div class="grid-2">
       <div class="card"><div class="card-title">Positive regression candidates · strong usage, soft results</div>${buys.length ? `<ul class="reglist">${buys.map(li).join('')}</ul>` : '<p class="sub">None this week.</p>'}</div>
       <div class="card"><div class="card-title">Fades · production running ahead of usage</div>${fades.length ? `<ul class="reglist">${fades.map(li).join('')}</ul>` : '<p class="sub">None this week.</p>'}</div>
-    </div><p class="sub">Based on expected fantasy points (xFP) from <a href="https://github.com/ffverse/ffopportunity" target="_blank" rel="noopener">ffopportunity</a>, which prices every target and carry by down, distance, field position and depth. FPOE = actual minus expected PPR points per game.</p>`;
+    </div><p class="sub">Based on expected fantasy points (xFP) from <a href="https://github.com/ffverse/ffopportunity" target="_blank" rel="noopener">ffopportunity</a>, which prices every target and carry by down, distance, field position and depth. FPOE = actual minus expected PPR points per game. Only a current role is listed: the starting quarterback, and skill players with a real snap or touch share in the team's last two games. Backups, players who are out, and garbage-time cameos are left off.</p>`;
     $$('li[data-id]', el).forEach(x => { const o = () => openPlayer(x.dataset.id); x.addEventListener('click', o); x.addEventListener('keydown', e => { if (e.key === 'Enter') o(); }); });
   }
 
