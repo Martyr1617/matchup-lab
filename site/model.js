@@ -343,6 +343,81 @@
     return HURT_STATUS.test(String(raw).trim());
   }
 
+  // Regression lists are buy and fade candidates, so they only include someone
+  // who is actually in a role. The quarterback is the first healthy name on
+  // the depth chart. A running back, receiver, or tight end needs a real snap
+  // or touch share in the team's last two games. One garbage-time cameo, a
+  // backup behind a healthy starter, and anyone ruled out do not qualify.
+  const REG_OUT = /^(out|ir|injured reserve|injury reserve|pup|sus|suspended|suspension|doubtful|inactive|na|cov)$/i;
+  const REG_RECENT = 2;
+
+  function regStatus(pl) {
+    return String((pl && pl.sl_inj && pl.sl_inj.status) || (pl && pl.inj && (pl.inj.status || pl.inj.st)) || '').trim();
+  }
+
+  function regUnavailable(pl) {
+    return REG_OUT.test(regStatus(pl));
+  }
+
+  function snapShare(g) {
+    if (!g || g.sp == null || g.sp === '') return null;
+    const n = Number(g.sp);
+    if (!Number.isFinite(n)) return null;
+    return n > 1.5 ? n / 100 : n;
+  }
+
+  function regMeaningful(pl, g) {
+    const sp = snapShare(g);
+    const pa = Number(g.pa) || 0;
+    const ca = Number(g.ca) || 0;
+    const tg = Number(g.tg) || 0;
+    if (pl.pos === 'QB') return pa >= 15 || (sp != null && sp >= 0.5 && pa >= 8);
+    if (sp != null && sp >= 0.4) return true;
+    if (pl.pos === 'RB') return ca >= 8 || ca + tg >= 10;
+    return tg >= 5;
+  }
+
+  function teamGameWeeks(data, team, week) {
+    const weeks = [];
+    const sched = (data && data.schedule) || {};
+    for (let w = 1; w < week; w++) {
+      const games = sched[String(w)] || sched[w] || [];
+      if (games.some(g => g && (g.home === team || g.away === team))) weeks.push(w);
+    }
+    return weeks;
+  }
+
+  function regRole(pl, week, data) {
+    if (!pl || !data || !['QB', 'RB', 'WR', 'TE'].includes(pl.pos)) return false;
+    if (regUnavailable(pl)) return false;
+    const wk = Number(week);
+    if (!Number.isFinite(wk)) return false;
+    const roles = data.roles && (data.roles[String(wk)] || data.roles[wk]);
+    const ruled = new Set(((roles && roles.out) || []).map(String));
+    if (pl.id != null && ruled.has(String(pl.id))) return false;
+    const byId = playersById(data);
+    const rawChart = roles && roles.chart && pl.team && roles.chart[pl.team] && roles.chart[pl.team][pl.pos];
+    const active = rawChart && rawChart.length
+      ? rawChart.map(String).filter(id => {
+        if (ruled.has(id)) return false;
+        const mate = byId.get(id);
+        return !(mate && regUnavailable(mate));
+      })
+      : null;
+    const idx = active ? active.indexOf(String(pl.id)) : -1;
+    if (pl.pos === 'QB' && active && active.length && idx !== 0) return false;
+    const played = teamGameWeeks(data, pl.team, wk);
+    const windowWeeks = played.slice(-REG_RECENT);
+    const log = new Map((pl.log || []).filter(g => g && !g.prior).map(g => [Number(g.wk), g]));
+    const real = windowWeeks.map(w => log.get(w)).filter(g => g && regMeaningful(pl, g));
+    if (!real.length) return false;
+    if (active && idx >= 0) {
+      const deep = pl.pos === 'WR' ? idx >= 4 : (pl.pos === 'RB' || pl.pos === 'TE') && idx >= 2;
+      if (deep && real.length < REG_RECENT) return false;
+    }
+    return true;
+  }
+
   function thinRole(pl) {
     if (!pl || !ROLE_VOL[pl.pos]) return true;
     const spec = ROLE_VOL[pl.pos];
@@ -737,5 +812,5 @@
     }
   }
 
-  return { SCORING, lgamma, gammaP, makeDist, PREDICTIVE_SPREAD, SNAP_BLEND, HEALTHY_SPREAD, ROLE_FLOOR_N, FULL_WORK_GAP, FULL_WORK_RATIO, project, fullWorkload, outcomeFloor, hurtStatus, thinRole, gameFor, weatherAdj, vegasFor, propsFor, propMean, boomBust, matchupGrade, normName, blend };
+  return { SCORING, lgamma, gammaP, makeDist, PREDICTIVE_SPREAD, SNAP_BLEND, HEALTHY_SPREAD, ROLE_FLOOR_N, FULL_WORK_GAP, FULL_WORK_RATIO, project, fullWorkload, outcomeFloor, hurtStatus, thinRole, regRole, gameFor, weatherAdj, vegasFor, propsFor, propMean, boomBust, matchupGrade, normName, blend };
 });
