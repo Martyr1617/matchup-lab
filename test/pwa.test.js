@@ -120,7 +120,7 @@ test('refresh status is a short fading label and data refreshes itself every 30 
   assert.match(app, /function userIsEditing/);
   assert.match(app, /isContentEditable/);
   assert.match(app, /slUser/);
-  assert.match(app, /if \(!\(silent && userIsEditing\(\)\)\) renderCurrent\(\)/);
+  assert.match(app, /if \(roster !== false && !\(silent && userIsEditing\(\)\)\) renderCurrent\(\)/);
   assert.match(app, /state\.view = view/);
   assert.match(app, /state\.week = week/);
   const auto = app.slice(app.indexOf('async function runAutoRefresh'), app.indexOf('function onVisibility'));
