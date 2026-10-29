@@ -50,7 +50,7 @@ test('news and trade sit immediately after my team', () => {
   const html = read('index.html');
   const nav = html.slice(html.indexOf('<nav class="tabs"'), html.indexOf('</nav>'));
   const views = [...nav.matchAll(/data-view="([^"]+)"/g)].map(m => m[1]);
-  assert.deepEqual(views, ['board', 'team', 'news', 'trade', 'player', 'compare', 'defense', 'method']);
+  assert.deepEqual(views, ['board', 'team', 'live', 'news', 'trade', 'player', 'compare', 'defense', 'method']);
   assert.match(nav, /class="tab is-active" data-view="board"/);
 });
 

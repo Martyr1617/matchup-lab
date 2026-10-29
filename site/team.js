@@ -628,7 +628,7 @@
           const sitBit = sitTag ? ` <span class="swap-proj">(${ML.esc(sitTag)})</span>` : '';
           return `<div class="move"><div class="swap-in"><span class="mv in">Start</span> <b>${ML.esc(s.start.name)}</b>${startBit}</div><div class="swap-out">${s.sit ? `<span class="mv out">Bench</span> <b>${ML.esc(s.sit.name)}</b>${sitBit}` : '<span class="mv out">Empty</span> <b>open slot</b>'}</div><div class="mv-why">${A.winAdvice.underdog ? 'Raises the ceiling while you are behind' : 'Raises the floor while you are ahead'}</div></div>`;
         }).join('')}</div>
-        <p class="sub">This is separate from the optimal lineup below, which still maximizes expected points. A player whose game has started stays put.</p>
+        <p class="sub">My Team still shows the lineup that maximizes expected points. A player whose game has started stays put.</p>
       </div>` : '';
     return `
       <div id="liveErr">${err}</div>
@@ -663,7 +663,6 @@
         <div class="kpi"><div class="k">Optimal lineup</div><div class="v">${ML.f1(A.optStats.mean)}</div><div class="s">projected pts · Week ${week}</div></div>
         ${A.curStats ? `<div class="kpi"><div class="k">Current lineup</div><div class="v">${ML.f1(A.curStats.mean)}</div><div class="s">as set in ${L.source === 'sleeper' ? 'Sleeper' : 'ESPN'}</div></div>
         <div class="kpi ${gain > 0.05 ? 'up' : ''}"><div class="k">Gain from changes</div><div class="v">${gain > 0.05 ? '+' + ML.f1(gain) : '0.0'}</div><div class="s">${swaps.length ? swaps.length + ' swap' + (swaps.length > 1 ? 's' : '') + ' suggested' : 'Lineup already optimal'}</div></div>` : ''}
-        ${A.opp ? `<div class="kpi"><div class="k">Win probability</div><div class="v">${ML.pct(A.opp.win)}</div><div class="s">current lineup vs ${ML.esc(A.opp.team.name)}</div></div>` : ''}
       </div>`;
 
     const sleeperLinks = L.source === 'sleeper' ? LUP.sleeperTeamLinks(L.id) : null;
@@ -725,7 +724,6 @@
         <div class="team-actions">${teamSel}<button class="btn ghost" type="button" id="changeLeague">${T.showConnect ? 'Hide' : 'Change league'}</button></div>
       </div>
       ${kpis}
-      <div id="liveMount">${liveBlock(A, L)}</div>
       ${movesCard}
       <div class="grid-team">${lineupCard}${benchCard}</div>
       ${waiverCard}
@@ -748,8 +746,26 @@
       ${teamPicker}
       ${L && T.teamId ? renderResults() : ''}`;
     bind();
+    renderLive();
     if (ML.state.view === 'board' && ML.renderBoard) ML.renderBoard();
     if (ML.state.view === 'news' && ML.renderNews) ML.renderNews();
+  }
+  const liveView = () => $('#view-live');
+  function renderLive() {
+    const el = liveView(); if (!el || !ML) return;
+    const L = T.league;
+    const week = ML.state.week;
+    if (!L || !T.teamId) {
+      el.innerHTML = `<div class="view-head"><div><h1 class="page-title">Live matchup</h1><p class="sub">Connect a team on My Team to see the score, win chance, and who to start.</p></div></div>`;
+      return;
+    }
+    const A = analyze(L, T.teamId, { waivers: false });
+    if (!A) { el.innerHTML = ''; return; }
+    const opp = A.opp && A.opp.team ? A.opp.team.name : '';
+    el.innerHTML = `
+      <div class="view-head"><div><h1 class="page-title">Live matchup · Week ${week}</h1><p class="sub">${opp ? `You against ${ML.esc(opp)}. ` : ''}Scores, win chance, and the floor or ceiling start sit here, apart from the roster on My Team.</p></div></div>
+      <div id="liveMount">${liveBlock(A, L)}</div>`;
+    $$('[data-ml]', el).forEach(n => n.addEventListener('click', () => ML.openPlayer(n.dataset.ml)));
   }
   function rosterIds() {
     const L = T.league;
@@ -869,8 +885,11 @@
     if (err && err.status === 429 && ms < LIVE_MS * 2) ms = LIVE_MS * 2;
     return ms;
   }
+  function liveTabOpen() {
+    return !!(ML && ML.state && ML.state.view === 'live' && document.visibilityState !== 'hidden');
+  }
   function pollWait() {
-    if (document.visibilityState === 'hidden') return IDLE_MS;
+    if (!liveTabOpen()) return IDLE_MS;
     if (gamesAreLive()) {
       const backoff = T.live && T.live.backoff;
       return backoff > LIVE_MS ? backoff : LIVE_MS;
@@ -978,7 +997,7 @@
     }
   }
   function paintLive() {
-    const el = view();
+    const el = liveView();
     const mount = el && $('#liveMount', el);
     if (!mount || !T.league || !T.teamId) return;
     const A = analyze(T.league, T.teamId, { waivers: false });
@@ -988,10 +1007,6 @@
       mount.innerHTML = liveBlock(A, T.league);
       $$('[data-ml]', mount).forEach(n => n.addEventListener('click', () => ML.openPlayer(n.dataset.ml)));
     }
-    $$('.kpi', el).forEach(k => {
-      const label = $('.k', k);
-      if (label && label.textContent === 'Win probability' && A.opp) tickText($('.v', k), ML.pct(A.opp.win));
-    });
   }
   async function refreshLive(opts) {
     // A lineup reload must not reuse a request that started with the old starters.
@@ -1021,25 +1036,35 @@
         backoff: nextBackoff(e),
       });
     }
-    if (!(opts && opts.silent) && ML.state && ML.state.view === 'team') paintLive();
+    if (!(opts && opts.silent) && liveTabOpen()) paintLive();
   }
   function armPoll(delay) {
     if (pollTimer) clearTimeout(pollTimer);
     const wait = delay != null ? delay : pollWait();
     pollTimer = setTimeout(async () => {
       pollTimer = 0;
-      if (document.visibilityState === 'hidden') { armPoll(IDLE_MS); return; }
+      if (!liveTabOpen()) { armPoll(IDLE_MS); return; }
       if (T.league && T.league.source === 'sleeper' && T.teamId) await refreshLive();
       armPoll();
     }, wait);
   }
+  function nudgeLive() {
+    if (!T.league || T.league.source !== 'sleeper' || !T.teamId) { armPoll(); return; }
+    const age = T.live && T.live.at ? Date.now() - T.live.at : Infinity;
+    if (gamesAreLive() || age >= IDLE_MS) refreshLive().finally(() => armPoll());
+    else armPoll();
+  }
   function onLiveVisibility() {
     if (document.visibilityState !== 'visible') return;
     if (!T.league || T.league.source !== 'sleeper' || !T.teamId) return;
-    if (gamesAreLive()) { refreshLive().finally(() => armPoll()); return; }
-    const age = T.live && T.live.at ? Date.now() - T.live.at : Infinity;
-    if (age >= IDLE_MS) refreshLive().finally(() => armPoll());
-    else armPoll();
+    if (!liveTabOpen()) { armPoll(IDLE_MS); return; }
+    nudgeLive();
+  }
+  function showLive() {
+    const ready = onRender();
+    const kick = () => { if (liveTabOpen()) nudgeLive(); else armPoll(IDLE_MS); };
+    if (ready && ready.then) ready.then(kick, kick);
+    else kick();
   }
   document.addEventListener('visibilitychange', onLiveVisibility);
 
@@ -1196,5 +1221,5 @@
     else render();
   }
 
-  window.MLTeam = { init, render: onRender, rosterIds, reload: reloadLeague, _analyze: (...a) => analyze(...a), _T: T };
+  window.MLTeam = { init, render: onRender, showLive, rosterIds, reload: reloadLeague, _analyze: (...a) => analyze(...a), _T: T };
 })();

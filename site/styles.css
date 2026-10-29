@@ -444,7 +444,7 @@ tbody tr:last-child td { border-bottom: 0; }
   select { padding: 0 var(--space-2); min-height: 44px; height: 44px; }
   .search input, .field input, .field textarea { font-size: 16px; }
   .icon-btn { width: 44px; height: 44px; }
-  .tab { height: 44px; }
+  .tab { height: 44px; padding: 0 var(--space-2); }
   .proj-hero .rng { line-height: 1.35; }
   .player-id img, .player-id .avatar-lg { width: 56px; height: 56px; }
   .page-title, .player-id h1 { font-size: 1.5rem; }
@@ -576,7 +576,7 @@ tbody tr:last-child td { border-bottom: 0; }
 .pcell.link:hover .name { text-decoration: underline; }
 .flag.lock { background: var(--color-neutral-bg); color: var(--color-text-muted); }
 .notes { margin: 0; padding-left: 1.1em; display: grid; gap: 4px; font-size: var(--text-sm); color: var(--color-text-muted); }
-#view-team > .card { margin-bottom: var(--space-5); }
+#view-team > .card, #view-live .card { margin-bottom: var(--space-5); }
 @media (max-width: 700px) {
   .move { grid-template-columns: 1fr; gap: var(--space-1); }
   .team-table .c-mu { display: none; }

@@ -1142,16 +1142,19 @@
     state.view = v;
     $$('.view').forEach(el => { el.hidden = el.id !== 'view-' + v; });
     $$('.tab').forEach(t => t.classList.toggle('is-active', t.dataset.view === v));
+    const activeTab = document.querySelector('.tab.is-active');
+    try { if (activeTab && activeTab.scrollIntoView) activeTab.scrollIntoView({ inline: 'nearest', block: 'nearest' }); } catch (e) { /* older browsers keep the tab bar as it is */ }
     $('#main').scrollTop = 0;
     if (v === 'board') renderBoard();
     if (v === 'defense') renderDefense();
     if (v === 'player' && state.player) renderPlayer(state.player);
     if (v === 'team' && window.MLTeam) window.MLTeam.render();
+    if (v === 'live' && window.MLTeam && window.MLTeam.showLive) window.MLTeam.showLive();
     if (v === 'compare') renderCompare();
     if (v === 'news') renderNews();
     if (v === 'trade' && window.MLTrade) window.MLTrade.render();
   }
-  function rerender() { if (state.view === 'board') renderBoard(); else if (state.view === 'player' && state.player) renderPlayer(state.player); else if (state.view === 'team' && window.MLTeam) window.MLTeam.render(); else if (state.view === 'compare') renderCompare(); else if (state.view === 'news') renderNews(); else if (state.view === 'trade' && window.MLTrade) window.MLTrade.render(); }
+  function rerender() { if (state.view === 'board') renderBoard(); else if (state.view === 'player' && state.player) renderPlayer(state.player); else if ((state.view === 'team' || state.view === 'live') && window.MLTeam) window.MLTeam.render(); else if (state.view === 'compare') renderCompare(); else if (state.view === 'news') renderNews(); else if (state.view === 'trade' && window.MLTrade) window.MLTrade.render(); }
 
   function fillWeeks(preserve) {
     const sel = $('#weekSelect');
