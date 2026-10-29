@@ -135,15 +135,32 @@ test('live scoring polls every 30 seconds and updates numbers in place', () => {
   assert.match(team, /function patchLive/);
   assert.match(team, /status === 429/);
   assert.match(team, /retry-after/);
-  assert.match(team, /if \(gamesAreLive\(\)\) \{ refreshLive\(\)\.finally/);
-  assert.match(team, /visibilityState === 'hidden'/);
+  assert.match(team, /if \(gamesAreLive\(\) \|\| age >= IDLE_MS\) refreshLive\(\)\.finally/);
+  assert.match(team, /function liveTabOpen/);
+  assert.match(team, /state\.view === 'live'/);
+  assert.match(team, /visibilityState !== 'hidden'/);
   assert.doesNotMatch(team, /Updated \$\{|ptClock|AM PT|PM PT/);
   assert.match(team, /every 30 seconds/);
   assert.match(team, /every 30 minutes/);
   assert.match(css, /@keyframes live-pulse/);
   assert.match(css, /@keyframes live-tick/);
   assert.match(html, /about every 30 seconds/);
+  assert.match(html, /data-view="live"/);
+  assert.match(html, /id="view-live"/);
+  const results = team.slice(team.indexOf('function renderResults'), team.indexOf('function render('));
+  assert.match(results, /id="optimal-lineup"/);
+  assert.match(results, /id="openSleeper"/);
+  assert.doesNotMatch(results, /id="liveMount"|class="live-pill"|id="winprob-lineup"|Win probability/);
+  const live = team.slice(team.indexOf('function renderLive'), team.indexOf('function rosterIds'));
+  assert.match(live, /id="liveMount"/);
+  assert.match(live, /liveBlock\(A, L\)/);
+  assert.match(team, /showLive/);
+  assert.match(readApp(), /MLTeam\.showLive/);
 });
+
+function readApp() {
+  return fs.readFileSync(path.join(__dirname, '..', 'site', 'app.js'), 'utf8');
+}
 
 test('kickers and defenses stay in the slot they already occupy', () => {
   const k1 = guy('k1', 'K', 8, 3);
