@@ -577,6 +577,14 @@ tbody tr:last-child td { border-bottom: 0; }
 .flag.lock { background: var(--color-neutral-bg); color: var(--color-text-muted); }
 .notes { margin: 0; padding-left: 1.1em; display: grid; gap: 4px; font-size: var(--text-sm); color: var(--color-text-muted); }
 #view-team > .card, #view-live .card { margin-bottom: var(--space-5); }
+.live-switch { display: flex; gap: var(--space-2); overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; margin: 0 0 var(--space-4); }
+.live-switch::-webkit-scrollbar { display: none; }
+.live-league { flex: 0 0 auto; max-width: 11rem; min-height: 44px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); text-align: left; }
+.live-league b, .live-league span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.live-league b { font-size: var(--text-sm); }
+.live-league span { font-size: var(--text-xs); color: var(--color-text-muted); }
+.live-league.on { border-color: var(--color-gold); background: color-mix(in oklab, var(--color-gold) 16%, var(--color-surface)); }
+.live-league.on span { color: var(--color-text); }
 @media (max-width: 700px) {
   .move { grid-template-columns: 1fr; gap: var(--space-1); }
   .team-table .c-mu { display: none; }

@@ -139,7 +139,8 @@
       };
     });
     const mine = userId ? teams.find(t => t.ownerIds.includes(userId)) : null;
-    return { source: 'sleeper', id: leagueId, name: lg.name, slots, S, unmodeled, teams, defaultTeamId: mine ? mine.id : null, week };
+    const bestBall = !!(lg.settings && Number(lg.settings.best_ball) === 1);
+    return { source: 'sleeper', id: String(leagueId), name: lg.name, slots, S, unmodeled, teams, defaultTeamId: mine ? mine.id : null, week, bestBall };
   }
   function resolveSleeper(sid) {
     const key = 'sl:' + sid;
@@ -388,10 +389,14 @@
     let winAdvice = null;
     if (opp) {
       opp.win = WP.winProb(mySide, opp.side);
-      winAdvice = WP.suggest({
-        slots: league.slots, current: myActors, roster: roster.map(toActor), opp: opp.side, elig: ELIG, minGain: 0.02,
-        altSeeds: [opt.map(p => (p ? toActor(p) : null))],
-      });
+      if (league.bestBall) {
+        winAdvice = { show: false, reason: 'bestball', currentProb: opp.win, bestProb: opp.win, gain: 0, swaps: [], underdog: opp.win < 0.5, currentMean: mySide.mean, oppMean: opp.side.mean };
+      } else {
+        winAdvice = WP.suggest({
+          slots: league.slots, current: myActors, roster: roster.map(toActor), opp: opp.side, elig: ELIG, minGain: 0.02,
+          altSeeds: [opt.map(p => (p ? toActor(p) : null))],
+        });
+      }
     }
 
     // Waiver targets: an available player is an add only when they out-value
@@ -587,6 +592,7 @@
     const pct = Math.round((w.currentProb || 0) * 100);
     const left = stillToPlay(A).map(p => p.name);
     const who = left.length ? ` Still to play: ${left.join(', ')}.` : '';
+    if (w.reason === 'bestball') return `Lineup is set automatically (best ball). Sleeper scores your best lineup. You're ${pct}% to win.`;
     if (w.reason === 'locked') return `You're ${pct}% to win. Every starter's game has already started, so nobody can be swapped.`;
     if (w.reason === 'behind') return `You're ${pct}% to win — no higher-ceiling swap among players who haven't kicked off raises the win chance by 2 points.${who}`;
     if (w.reason === 'even') return `You're ${pct}% to win. No swap among players who haven't kicked off moves the win chance by 2 points.${who}`;
@@ -599,6 +605,16 @@
   }
   function liveRow(slot, p, actor, side) {
     return `<td>${slotBadge(slot)}</td><td class="who">${playerCell(p)}</td><td class="num" data-k="${side}-pts">${liveNum(p)}</td><td data-k="${side}-st">${p ? statusCell(p) : '<span class="sub">—</span>'}</td><td class="num" data-k="${side}-final">${finalNum(actor)}</td>`;
+  }
+  function sleeperTotal(rosterId, fallback) {
+    const row = T.live && T.live.byRoster && rosterId != null ? T.live.byRoster[String(rosterId)] : null;
+    const n = row && Number(row.points);
+    return Number.isFinite(n) ? n : fallback;
+  }
+  function headline(side, rosterId, bestBall) {
+    const live = bestBall ? sleeperTotal(rosterId, side.live) : side.live;
+    const mean = bestBall ? live + (side.mean - side.live) : side.mean;
+    return { live, mean };
   }
   function liveCadence(anyLive) {
     if (!T.league || T.league.source !== 'sleeper') return 'Live Sleeper points are available on Sleeper leagues. This view uses kickoff time for who is locked.';
@@ -614,12 +630,14 @@
     const anyLive = gamesAreLive();
     const mark = anyLive ? '<span class="live-pill"><span class="live-dot" aria-hidden="true"></span>LIVE</span>' : '';
     const err = T.live && T.live.error ? `<div class="notice bad">Couldn't refresh Sleeper just now (${ML.esc(T.live.error)}). Showing the last lineup we could read.</div>` : '';
-    const margin = opp ? `${side.mean >= opp.side.mean ? 'up' : 'down'} ${ML.f1(Math.abs(side.mean - opp.side.mean))}` : '';
+    const mineShown = headline(side, A.team && A.team.id, L.bestBall);
+    const oppShown = opp ? headline(opp.side, opp.team.id, L.bestBall) : null;
+    const margin = oppShown ? `${mineShown.mean >= oppShown.mean ? 'up' : 'down'} ${ML.f1(Math.abs(mineShown.mean - oppShown.mean))}` : '';
     const board = opp ? `
       <div class="live-board">
-        <div class="live-side"><div class="k">Your live total</div><div class="live-pts" data-k="mine">${ML.f1(side.live)}</div><div class="sub">Proj final <span data-k="mine-final">${ML.f1(side.mean)}</span></div></div>
+        <div class="live-side"><div class="k">Your live total</div><div class="live-pts" data-k="mine">${ML.f1(mineShown.live)}</div><div class="sub">Proj final <span data-k="mine-final">${ML.f1(mineShown.mean)}</span></div></div>
         <div class="live-wp"><div class="k">Win chance</div><div class="v" data-k="wp">${ML.pct(opp.win)}</div><div class="sub" data-k="margin">${margin}</div></div>
-        <div class="live-side"><div class="k">${ML.esc(opp.team.name)}</div><div class="live-pts" data-k="opp">${ML.f1(opp.side.live)}</div><div class="sub">Proj final <span data-k="opp-final">${ML.f1(opp.side.mean)}</span></div></div>
+        <div class="live-side"><div class="k">${ML.esc(opp.team.name)}</div><div class="live-pts" data-k="opp">${ML.f1(oppShown.live)}</div><div class="sub">Proj final <span data-k="opp-final">${ML.f1(oppShown.mean)}</span></div></div>
       </div>` : `
       <div class="live-board solo"><div class="live-side"><div class="k">Your projected total</div><div class="live-pts" data-k="mine">${ML.f1(side.mean)}</div><div class="sub">No opponent is linked for this week</div></div></div>`;
     const n = Math.max(mine.length, opp ? opp.players.length : 0);
@@ -645,7 +663,7 @@
           const sitBit = sitTag ? ` <span class="swap-proj">(${ML.esc(sitTag)})</span>` : '';
           return `<div class="move"><div class="swap-in"><span class="mv in">Start</span> <b>${ML.esc(s.start.name)}</b>${startBit}</div><div class="swap-out">${s.sit ? `<span class="mv out">Bench</span> <b>${ML.esc(s.sit.name)}</b>${sitBit}` : '<span class="mv out">Empty</span> <b>open slot</b>'}</div><div class="mv-why">${A.winAdvice.underdog ? 'Raises the ceiling while you are behind' : 'Raises the floor while you are ahead'}</div></div>`;
         }).join('')}</div>` : ''}
-        <p class="sub">My Team still shows the lineup that maximizes expected points. A player whose game has started stays put.</p>
+        <p class="sub">${L.bestBall ? 'Best ball sets the lineup for you. There is no start/sit choice.' : 'My Team still shows the lineup that maximizes expected points. A player whose game has started stays put.'}</p>
       </div>` : '';
     return `
       <div id="liveErr">${err}</div>
@@ -780,9 +798,71 @@
     if (!A) { el.innerHTML = ''; return; }
     const opp = A.opp && A.opp.team ? A.opp.team.name : '';
     el.innerHTML = `
-      <div class="view-head"><div><h1 class="page-title">Live matchup · Week ${week}</h1><p class="sub">${opp ? `You against ${ML.esc(opp)}. ` : ''}Scores, win chance, and the floor or ceiling start sit here, apart from the roster on My Team.</p></div></div>
+      <div class="view-head"><div><h1 class="page-title">Live matchup · Week ${week}</h1><p class="sub">${opp ? `You against ${ML.esc(opp)}. ` : ''}${L.bestBall ? 'Best ball sets this lineup. ' : ''}My Team follows the league selected here.</p></div></div>
+      ${liveSwitcher()}
       <div id="liveMount">${liveBlock(A, L)}</div>`;
     $$('[data-ml]', el).forEach(n => n.addEventListener('click', () => ML.openPlayer(n.dataset.ml)));
+    $$('.live-league', el).forEach(b => b.addEventListener('click', () => { if (!b.classList.contains('on')) selectLiveLeague(b.dataset.lid); }));
+  }
+  const LIVE_LEAGUE_KEY = 'matchuplab.liveLeague.v1';
+  let livePacks = [];
+  let packErrors = [];
+  let packFlight = null;
+  function packOf(id) { return livePacks.find(p => p.id === String(id)); }
+  function seedCurrentPack() {
+    if (!T.league || T.league.source !== 'sleeper') return;
+    const id = String(T.league.id);
+    let p = packOf(id);
+    if (!p) { p = { id, teamId: T.teamId, league: T.league, live: T.live || null }; livePacks.push(p); }
+    else { p.league = T.league; p.teamId = T.teamId || p.teamId; if (T.live) p.live = T.live; }
+  }
+  function rememberLiveLeague(id) { if (id) store.set(LIVE_LEAGUE_KEY, String(id)); }
+  function liveSwitcher() {
+    if (livePacks.length < 1 || !T.sleeperUser) return '';
+    const cur = T.league ? String(T.league.id) : '';
+    const chips = livePacks.slice().sort((a, b) => String(a.league.name).localeCompare(String(b.league.name))).map(p => {
+      const team = (p.league.teams || []).find(t => String(t.id) === String(p.teamId));
+      const on = p.id === cur;
+      return `<button type="button" class="live-league${on ? ' on' : ''}" data-lid="${ML.esc(p.id)}" aria-pressed="${on}"><b>${ML.esc(p.league.name)}</b><span>${ML.esc(team ? team.name : 'My team')}</span></button>`;
+    }).join('');
+    return `<div class="live-switch" role="group" aria-label="Your leagues">${chips}</div>`;
+  }
+  // Live and My Team share one league. Choosing a chip here updates both.
+  function selectLiveLeague(id) {
+    const p = packOf(id);
+    if (!p) return;
+    rememberLiveLeague(p.id);
+    if (T.league && String(T.league.id) === p.id && String(T.teamId) === String(p.teamId)) return;
+    T.league = p.league;
+    T.teamId = p.teamId;
+    T.live = p.live || null;
+    T.showConnect = false;
+    T.error = null;
+    setHash();
+    render();
+    if (!p.live || Date.now() - (p.live.at || 0) > 15000) refreshLive({ fresh: true });
+  }
+  async function ensureLivePacks() {
+    seedCurrentPack();
+    if (!T.sleeperUser || !Array.isArray(T.sleeperLeagues)) return livePacks;
+    if (packFlight) return packFlight;
+    const userId = T.sleeperUser.user_id;
+    const ids = T.sleeperLeagues.map(l => String(l.league_id)).filter(isId);
+    packFlight = (async () => {
+      await Promise.all(ids.map(async id => {
+        if (packOf(id)) return;
+        try {
+          const L = await sleeperLoadLeague(id, userId);
+          livePacks.push({ id: String(L.id), teamId: L.defaultTeamId, league: L, live: null });
+        } catch (e) { packErrors.push(String(id) + ': ' + (e && e.message || e)); }
+      }));
+      seedCurrentPack();
+      const saved = store.get(LIVE_LEAGUE_KEY, '');
+      if (saved && packOf(saved) && (!T.league || String(T.league.id) !== String(saved)) && ML && ML.state && ML.state.view === 'live') selectLiveLeague(saved);
+      renderLive();
+      refreshLive({ silent: true, fresh: true });
+    })().finally(() => { packFlight = null; });
+    return packFlight;
   }
   function rosterIds() {
     const L = T.league;
@@ -984,15 +1064,18 @@
     const side = A.mySide || WP.sideOf(actors);
     const opp = A.opp;
     const anyLive = gamesAreLive();
+    const bestBall = !!(T.league && T.league.bestBall);
+    const mineShown = headline(side, A.team && A.team.id, bestBall);
+    const oppShown = opp ? headline(opp.side, opp.team.id, bestBall) : null;
     const err = mount.querySelector('#liveErr');
     if (err) err.innerHTML = T.live && T.live.error ? `<div class="notice bad">Couldn't refresh Sleeper just now (${ML.esc(T.live.error)}). Showing the last lineup we could read.</div>` : '';
-    tickText(mount.querySelector('[data-k="mine"]'), opp ? ML.f1(side.live) : ML.f1(side.mean));
-    tickText(mount.querySelector('[data-k="mine-final"]'), ML.f1(side.mean));
-    if (opp) {
+    tickText(mount.querySelector('[data-k="mine"]'), opp ? ML.f1(mineShown.live) : ML.f1(mineShown.mean));
+    tickText(mount.querySelector('[data-k="mine-final"]'), ML.f1(mineShown.mean));
+    if (opp && oppShown) {
       tickText(mount.querySelector('[data-k="wp"]'), ML.pct(opp.win));
-      tickText(mount.querySelector('[data-k="margin"]'), `${side.mean >= opp.side.mean ? 'up' : 'down'} ${ML.f1(Math.abs(side.mean - opp.side.mean))}`);
-      tickText(mount.querySelector('[data-k="opp"]'), ML.f1(opp.side.live));
-      tickText(mount.querySelector('[data-k="opp-final"]'), ML.f1(opp.side.mean));
+      tickText(mount.querySelector('[data-k="margin"]'), `${mineShown.mean >= oppShown.mean ? 'up' : 'down'} ${ML.f1(Math.abs(mineShown.mean - oppShown.mean))}`);
+      tickText(mount.querySelector('[data-k="opp"]'), ML.f1(oppShown.live));
+      tickText(mount.querySelector('[data-k="opp-final"]'), ML.f1(oppShown.mean));
     }
     mount.querySelectorAll('tbody tr[data-i]').forEach((row, i) => {
       const p = mine[i];
@@ -1034,24 +1117,34 @@
   }
   async function refreshLiveNow(opts) {
     const epoch = leagueEpoch;
-    const L = T.league;
-    if (!L || L.source !== 'sleeper' || !ML) return;
+    seedCurrentPack();
+    const targets = livePacks.filter(p => p.league && p.league.source === 'sleeper');
+    if (!targets.length || !ML) return;
     const week = ML.state.week;
     const season = (ML.state.data && ML.state.data.meta && ML.state.data.meta.season) || SEASON;
+    let games = (T.live && T.live.games) || {};
+    let scoreErr = null;
     try {
-      const [matchups, scores] = await Promise.all([
-        getJSON(`https://api.sleeper.app/v1/league/${L.id}/matchups/${week}`),
-        getJSON(`https://api.sleeper.app/scores/nfl/regular/${season}/${week}`),
-      ]);
-      if (epoch !== leagueEpoch || T.league !== L) return;
-      T.live = { at: Date.now(), byRoster: indexMatchups(matchups), games: indexGames(scores), error: null, backoff: 0 };
-    } catch (e) {
-      if (epoch !== leagueEpoch || T.league !== L) return;
-      T.live = Object.assign({}, T.live, {
-        error: e.message || 'request failed',
-        at: (T.live && T.live.at) || Date.now(),
-        backoff: nextBackoff(e),
-      });
+      games = indexGames(await getJSON(`https://api.sleeper.app/scores/nfl/regular/${season}/${week}`));
+    } catch (e) { scoreErr = e; }
+    await Promise.all(targets.map(async p => {
+      try {
+        const matchups = await getJSON(`https://api.sleeper.app/v1/league/${p.id}/matchups/${week}`);
+        p.live = { at: Date.now(), byRoster: indexMatchups(matchups), games, error: null, backoff: 0 };
+      } catch (e) {
+        p.live = Object.assign({}, p.live, {
+          error: e.message || 'request failed',
+          at: (p.live && p.live.at) || Date.now(),
+          games,
+          backoff: nextBackoff(e),
+        });
+      }
+    }));
+    if (epoch !== leagueEpoch) return;
+    const cur = T.league && packOf(T.league.id);
+    if (cur && cur.live) T.live = cur.live;
+    else if (scoreErr) {
+      T.live = Object.assign({}, T.live, { error: scoreErr.message || 'request failed', at: Date.now(), backoff: nextBackoff(scoreErr), games });
     }
     if (!(opts && opts.silent) && liveTabOpen()) paintLive();
   }
@@ -1095,7 +1188,10 @@
       const L = await sleeperLoadLeague(lid, T.sleeperUser?.user_id);
       if (epoch !== leagueEpoch) return;
       T.league = L; T.teamId = teamId && L.teams.some(t => t.id === teamId) ? teamId : L.defaultTeamId; T.showConnect = false; setHash();
+      rememberLiveLeague(T.league && T.league.id);
+      seedCurrentPack();
       await refreshLive({ silent: true, fresh: true });
+      ensureLivePacks();
     } catch (err) {
       if (epoch !== leagueEpoch) return;
       T.error = `Couldn't load that Sleeper league: ${err.message}`;
@@ -1148,8 +1244,11 @@
         T.showConnect = false;
         lastWeek = ML.state.week;
         setHash();
+        rememberLiveLeague(T.league && T.league.id);
+        seedCurrentPack();
         render();
         await refreshLive({ fresh: true });
+        ensureLivePacks();
         if (epoch !== leagueEpoch) return true;
         if (T.league && T.league.source === 'sleeper') armPoll();
         return 'league';
