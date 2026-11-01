@@ -204,6 +204,13 @@
       });
     }
     const curSide = sideOf(current);
+    let reason = 'swap';
+    if (!swaps.length) {
+      if (!openIdx.length) reason = 'locked';
+      else if (Math.abs(currentProb - 0.5) <= 0.01) reason = 'even';
+      else if (currentProb < 0.5) reason = 'behind';
+      else reason = 'ahead';
+    }
     return {
       currentProb,
       bestProb: swaps.length ? best.prob : currentProb,
@@ -216,6 +223,7 @@
       oppLive: opp.live || 0,
       underdog: currentProb < 0.5,
       show: swaps.length > 0,
+      reason,
     };
   }
 

@@ -90,6 +90,77 @@ test('a started player is locked once the game has started', () => {
   });
   assert.equal(out.show, false);
   assert.equal(out.swaps.length, 0);
+  assert.equal(out.reason, 'locked');
+  assert.ok(!out.swaps.some(s => (s.start && s.start.key) === 'started' || (s.sit && s.sit.key) === 'boom' && false));
+});
+
+test('a favorite with no useful swap keeps the safer starters', () => {
+  const safe = guy('safe', 'RB', 14, 2);
+  const worse = guy('worse', 'RB', 8, 3);
+  const locked = guy('qb', 'QB', 40, 1, { locked: true, playable: false, live: 30, fraction: 0 });
+  const out = suggest({
+    slots: ['QB', 'RB'],
+    current: [locked, safe],
+    roster: [locked, safe, worse],
+    opp: { mean: 20, sd: 4, live: 10 },
+    elig: ELIG,
+    minGain: 0.02,
+  });
+  assert.equal(out.show, false);
+  assert.equal(out.reason, 'ahead');
+  assert.ok(out.currentProb > 0.5);
+  assert.equal(out.swaps.length, 0);
+  assert.ok(out.players[0].locked);
+  assert.equal(out.players[0].key, 'qb');
+});
+
+test('an underdog with no useful swap does not chase a worse ceiling', () => {
+  const safe = guy('safe', 'WR', 10, 2);
+  const worse = guy('worse', 'WR', 6, 2);
+  const out = suggest({
+    slots: ['WR'],
+    current: [safe],
+    roster: [safe, worse],
+    opp: { mean: 40, sd: 6, live: 20 },
+    elig: ELIG,
+    minGain: 0.02,
+  });
+  assert.equal(out.show, false);
+  assert.equal(out.reason, 'behind');
+  assert.ok(out.currentProb < 0.5);
+  assert.equal(out.swaps.length, 0);
+});
+
+test('an even matchup with no two-point gain stays put', () => {
+  const a = guy('a', 'WR', 12, 4);
+  const b = guy('b', 'WR', 12.05, 4);
+  const out = suggest({
+    slots: ['WR'],
+    current: [a],
+    roster: [a, b],
+    opp: { mean: 12, sd: 30, live: 0 },
+    elig: ELIG,
+    minGain: 0.02,
+  });
+  assert.equal(out.show, false);
+  assert.equal(out.reason, 'even');
+  assert.ok(Math.abs(out.currentProb - 0.5) < 0.05);
+});
+
+test('a locked starter is not the player a suggestion tells you to bench', () => {
+  const locked = guy('locked', 'RB', 8, 3, { locked: true, playable: false, live: 4, fraction: 0.3 });
+  const safe = guy('safe', 'WR', 16, 2);
+  const boom = guy('boom', 'WR', 12, 12);
+  const out = suggest({
+    slots: ['RB', 'WR'],
+    current: [locked, safe],
+    roster: [locked, safe, boom],
+    opp: { mean: 80, sd: 8 },
+    elig: ELIG,
+    minGain: 0.02,
+  });
+  assert.equal(out.players[0].key, 'locked');
+  assert.ok(!out.swaps.some(s => s.slot === 'RB' || (s.sit && s.sit.key === 'locked') || (s.start && s.start.key === 'locked')));
 });
 
 test('a tiny win-chance gain is not a suggestion', () => {
@@ -155,6 +226,11 @@ test('live scoring polls every 30 seconds and updates numbers in place', () => {
   assert.match(live, /id="liveMount"/);
   assert.match(live, /liveBlock\(A, L\)/);
   assert.match(team, /showLive/);
+  assert.match(team, /function adviceIdle/);
+  assert.match(team, /all remaining starters are already the safer plays/);
+  assert.match(team, /no higher-ceiling swap among players who haven't kicked off/);
+  assert.match(team, /Every starter's game has already started/);
+  assert.match(team, /adviceLine\(A\)/);
   assert.match(readApp(), /MLTeam\.showLive/);
 });
 

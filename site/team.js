@@ -307,7 +307,7 @@
       live: p.livePts == null ? 0 : p.livePts,
       fraction: phase.fraction,
       locked: !!p.locked || unmodeled,
-      playable: p.status === 'ok' && !p.locked && phase.fraction >= 0.999 && !!projected,
+      playable: p.status === 'ok' && !p.locked && phase.fraction >= 0.999 && !!projected && Number.isFinite(p.proj),
       phase, player: p,
     };
   }
@@ -562,23 +562,40 @@
     const phase = p && p.gamePhase || { status: 'yet', label: 'Yet to play' };
     return `<span class="live-status ${ML.esc(phase.status)}">${ML.esc(phase.label || 'Yet to play')}</span>`;
   }
+  function stillToPlay(A) {
+    const slots = (T.league && T.league.slots) || [];
+    return (A.myBasePlayers || []).filter((p, i) => p && !p.locked && WP.SKILL_SLOTS.has(slots[i]));
+  }
   function adviceSentence(w) {
-    const margin = w.oppMean - w.currentMean;
-    const by = ML.f1(Math.abs(margin));
-    const where = margin > 0.05 ? `You're projected to lose by ${by}` : margin < -0.05 ? `You're projected to win by ${by}` : `You're projected to finish even`;
+    const pct = Math.round(w.currentProb * 100);
+    const kind = w.underdog ? 'higher-ceiling' : 'safer';
     const bits = w.swaps.filter(s => s.start).map(s => {
       const ceil = s.start.ceil == null ? '' : ` (ceiling ${ML.f1(s.start.ceil)})`;
       const floor = s.start.floor == null ? '' : ` (floor ${ML.f1(s.start.floor)})`;
       const tag = w.underdog ? ceil : floor;
-      if (!s.sit) return `start ${s.start.name}${tag} in an empty slot`;
+      if (!s.sit) return `start ${kind} ${s.start.name}${tag} in an empty slot`;
       const other = w.underdog
         ? (s.sit.floor == null ? '' : ` (floor ${ML.f1(s.sit.floor)})`)
         : (s.sit.ceil == null ? '' : ` (ceiling ${ML.f1(s.sit.ceil)})`);
-      return `start ${s.start.name}${tag} over ${s.sit.name}${other}`;
+      return `start ${kind} ${s.start.name}${tag} over ${s.sit.name}${other}`;
     });
     const p0 = Math.round(w.currentProb * 100);
     const p1 = Math.round(w.bestProb * 100);
-    return `${where} — ${bits.join('; ')}: win chance ${p0}% → ${p1}%`;
+    return `You're ${pct}% to win — ${bits.join('; ')}: win chance ${p0}% → ${p1}%`;
+  }
+  function adviceIdle(w, A) {
+    const pct = Math.round((w.currentProb || 0) * 100);
+    const left = stillToPlay(A).map(p => p.name);
+    const who = left.length ? ` Still to play: ${left.join(', ')}.` : '';
+    if (w.reason === 'locked') return `You're ${pct}% to win. Every starter's game has already started, so nobody can be swapped.`;
+    if (w.reason === 'behind') return `You're ${pct}% to win — no higher-ceiling swap among players who haven't kicked off raises the win chance by 2 points.${who}`;
+    if (w.reason === 'even') return `You're ${pct}% to win. No swap among players who haven't kicked off moves the win chance by 2 points.${who}`;
+    return `You're ${pct}% to win — all remaining starters are already the safer plays for protecting the lead.${who}`;
+  }
+  function adviceLine(A) {
+    const w = A && A.winAdvice;
+    if (!w) return '';
+    return w.show ? adviceSentence(w) : adviceIdle(w, A);
   }
   function liveRow(slot, p, actor, side) {
     return `<td>${slotBadge(slot)}</td><td class="who">${playerCell(p)}</td><td class="num" data-k="${side}-pts">${liveNum(p)}</td><td data-k="${side}-st">${p ? statusCell(p) : '<span class="sub">—</span>'}</td><td class="num" data-k="${side}-final">${finalNum(actor)}</td>`;
@@ -617,17 +634,17 @@
       ? `<tr><th>Slot</th><th>Your starter</th><th class="num">Live</th><th>Status</th><th class="num">Proj final</th><th>Opponent</th><th class="num">Live</th><th>Status</th></tr>`
       : `<tr><th>Slot</th><th>Starter</th><th class="num">Live</th><th>Status</th><th class="num">Proj final</th></tr>`;
     const swapKey = A.winAdvice && A.winAdvice.show ? A.winAdvice.swaps.filter(s => s.start).map(s => (s.start.key || '') + '>' + (s.sit && s.sit.key || '')).join('|') : '';
-    const advice = A.winAdvice && A.winAdvice.show ? `
+    const advice = A.winAdvice ? `
       <div class="card" id="winprob-lineup" data-swaps="${ML.esc(swapKey)}">
         <div class="card-title">Win-probability suggestion</div>
-        <p class="wp-line">${ML.esc(adviceSentence(A.winAdvice))}</p>
-        <div class="moves">${A.winAdvice.swaps.filter(s => s.start).map(s => {
+        <p class="wp-line">${ML.esc(adviceLine(A))}</p>
+        ${A.winAdvice.show ? `<div class="moves">${A.winAdvice.swaps.filter(s => s.start).map(s => {
           const startTag = A.winAdvice.underdog ? (s.start.ceil == null ? '' : 'ceiling ' + ML.f1(s.start.ceil)) : (s.start.floor == null ? '' : 'floor ' + ML.f1(s.start.floor));
           const sitTag = !s.sit ? '' : A.winAdvice.underdog ? (s.sit.floor == null ? '' : 'floor ' + ML.f1(s.sit.floor)) : (s.sit.ceil == null ? '' : 'ceiling ' + ML.f1(s.sit.ceil));
           const startBit = startTag ? ` <span class="swap-proj">(${ML.esc(startTag)})</span>` : '';
           const sitBit = sitTag ? ` <span class="swap-proj">(${ML.esc(sitTag)})</span>` : '';
           return `<div class="move"><div class="swap-in"><span class="mv in">Start</span> <b>${ML.esc(s.start.name)}</b>${startBit}</div><div class="swap-out">${s.sit ? `<span class="mv out">Bench</span> <b>${ML.esc(s.sit.name)}</b>${sitBit}` : '<span class="mv out">Empty</span> <b>open slot</b>'}</div><div class="mv-why">${A.winAdvice.underdog ? 'Raises the ceiling while you are behind' : 'Raises the floor while you are ahead'}</div></div>`;
-        }).join('')}</div>
+        }).join('')}</div>` : ''}
         <p class="sub">My Team still shows the lineup that maximizes expected points. A player whose game has started stays put.</p>
       </div>` : '';
     return `
@@ -952,10 +969,10 @@
       if (opp && rows[i].getAttribute('data-opp') !== ((other && other.key) || '')) return false;
     }
     const card = mount.querySelector('#winprob-lineup');
-    const show = !!(A.winAdvice && A.winAdvice.show);
-    if (!!card !== show) return false;
-    if (show) {
-      const key = A.winAdvice.swaps.filter(s => s.start).map(s => (s.start.key || '') + '>' + (s.sit && s.sit.key || '')).join('|');
+    const expectCard = !!A.opp;
+    if (!!card !== expectCard) return false;
+    if (card) {
+      const key = A.winAdvice && A.winAdvice.show ? A.winAdvice.swaps.filter(s => s.start).map(s => (s.start.key || '') + '>' + (s.sit && s.sit.key || '')).join('|') : '';
       if (card.getAttribute('data-swaps') !== key) return false;
     }
     if (!!mount.querySelector('.live-pill') !== gamesAreLive()) return false;
@@ -991,9 +1008,9 @@
     });
     const note = mount.querySelector('[data-k="note"]');
     if (note) note.textContent = liveCadence(anyLive);
-    if (A.winAdvice && A.winAdvice.show) {
+    if (A.winAdvice) {
       const line = mount.querySelector('.wp-line');
-      if (line) line.textContent = adviceSentence(A.winAdvice);
+      if (line) line.textContent = adviceLine(A);
     }
   }
   function paintLive() {
