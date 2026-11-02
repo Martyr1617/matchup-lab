@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
-const { lgamma, makeDist, project, fullWorkload, normName, propMean, PREDICTIVE_SPREAD, SNAP_BLEND, outcomeFloor, HEALTHY_SPREAD, ROLE_FLOOR_N, FULL_WORK_GAP, FULL_WORK_RATIO, regRole } = require('../site/model');
+const { lgamma, makeDist, project, fullWorkload, normName, propMean, PREDICTIVE_SPREAD, SNAP_BLEND, outcomeFloor, HEALTHY_SPREAD, ROLE_FLOOR_N, FULL_WORK_GAP, FULL_WORK_RATIO, regRole, returnerReady } = require('../site/model');
 
 function factors() {
   return { rush_att: 1, ypc: 1, rush_td: 1, pass_att: 1, comp_pct: 1, ypa: 1, pass_td: 1, int: 1 };
@@ -399,6 +399,48 @@ test('regression lists drop players who are out and garbage-time or deep-chart c
   assert.equal(regRole(committee, 8, data), true);
   deep.log.push(logGame(7, { ca: 10, tg: 3, sp: 0.5 }));
   assert.equal(regRole(deep, 8, data), true);
+});
+
+test('a cleared back with no 2026 games projects his healthy prior, and the fill-in gives the extra carries back', () => {
+  const e = env();
+  e.data.team_off.BUF.pass_att_pg = 32;
+  e.data.roles = { 6: { out: ['zach'], chart: { BUF: { RB: ['zach', 'fill'] } } } };
+  e.data.players = [];
+  const prior = { ca: 11.5, ts: 0.052, pa: 0, t: { ca: 184, ry: 730, rtd: 12, tg: 24, rc: 20, rcy: 144, rctd: 0, pa: 0, py: 0, ptd: 0, int: 0, fl: 0 } };
+  const zach = {
+    id: 'zach', name: 'Zach Charbonnet', pos: 'RB', team: 'BUF', g: 0, tradeOnly: true,
+    w: {}, t: {}, log: [], prior,
+  };
+  const fill = {
+    id: 'fill', name: 'Emanuel Wilson', pos: 'RB', team: 'BUF', g: 7, cv: 0.45,
+    w: { pa: 0, py: 0, ptd: 0, int: 0, ca: 18.5, ry: 70, rtd: 0.6, tg: 1.4, rc: 1, rcy: 11, rctd: 0.1 },
+    t: { pa: 0, py: 0, ptd: 0, int: 0, ca: 130, ry: 490, rtd: 4, tg: 10, rc: 7, rcy: 77, rctd: 1, fl: 0, two: 0 },
+    prior: { ca: 10.3, ts: 0.05, pa: 0, t: { ca: 125, ry: 496, rtd: 3, tg: 17, rc: 15, rcy: 99, rctd: 0, pa: 0, py: 0, ptd: 0, int: 0, fl: 0 } },
+  };
+  e.data.players = [zach, fill];
+  assert.equal(returnerReady(zach, 6, e), false);
+  zach.cleared = true;
+  e.data.roles[6].out = [];
+  const back = project(zach, 6, 'ppr', e);
+  assert.equal(back.bye, false);
+  assert.equal(back.returning, true);
+  assert.ok(back.pts > 8, 'pts ' + back.pts);
+  assert.ok(back.comps.ca > 10 && back.comps.ca < 14, 'carries ' + back.comps.ca);
+  const stillOut = project({ ...zach, cleared: false, sl_inj: { status: 'PUP', body: 'Knee - ACL' } }, 6, 'ppr', e);
+  assert.ok(!(stillOut.pts > 8), 'pup line ' + stillOut.pts);
+  const committee = project(fill, 6, 'ppr', e);
+  assert.ok(committee.comps.ca < 12, 'fill-in carries ' + committee.comps.ca);
+  assert.ok(committee.comps.ca > 9, 'fill-in floor ' + committee.comps.ca);
+  assert.equal(fullWorkload(zach, 6, 'ppr', e), null);
+  const played = {
+    id: 'zach', name: 'Zach Charbonnet', pos: 'RB', team: 'CHI', cleared: true,
+    sl_inj: { status: 'PUP', body: 'Knee - ACL' },
+    log: [6, 7].map(wk => ({ wk, ca: 12, tg: 3, sp: 0.62, pa: 0 })),
+  };
+  const data = roleEnv([played], { RB: ['zach'] }).data;
+  assert.equal(regRole(played, 8, data), true);
+  played.cleared = false;
+  assert.equal(regRole(played, 8, data), false);
 });
 
 test('the regression cards use the playing-role filter', () => {

@@ -265,6 +265,63 @@ test('full practice overrides a stale PUP or ACL tag', () => {
   assert.equal(evans.practice, '');
 });
 
+test('activation clears a stale PUP and ACL tag without a full-practice sentence', () => {
+  const comment = 'Charbonnet (knee) does not carry an injury designation into Monday\'s game. He has been cleared to make his 2026 regular-season debut after tearing his ACL in January.';
+  const plan = trade.injuryPlan({
+    status: 'PUP', body: 'Knee - ACL', lastWeek: 0, nextWeek: 8, basis: 10,
+    name: 'Zach Charbonnet', comment, practice: comment, news: [],
+  });
+  assert.equal(plan.long, false);
+  assert.equal(plan.activated, true);
+  assert.equal(plan.miss, 0);
+  assert.equal(plan.practice, 'Activated');
+  assert.match(plan.note, /Not out for the season/);
+  const active = trade.injuryPlan({
+    status: 'Active', body: 'Knee - ACL', lastWeek: 0, nextWeek: 8, basis: 10,
+    name: 'Zach Charbonnet', comment: '', news: [],
+  });
+  assert.equal(active.long, false);
+  assert.equal(active.miss, 0);
+  const still = trade.injuryPlan({ status: 'IR', body: 'Knee - ACL', lastWeek: 3, nextWeek: 8, basis: 10, name: 'Zach Charbonnet', news: [] });
+  assert.equal(still.long, true);
+  const build = fs.readFileSync(path.join(__dirname, '..', 'build_trade.js'), 'utf8');
+  assert.doesNotMatch(build, /acl\|achilles\/i\.test\(body\) && severity\(current\) < 4/);
+  const star = {
+    id: 'zach', name: 'Zach Charbonnet', pos: 'RB', team: 'SEA', g: 0, last_wk: 0,
+    sl_inj: { status: 'PUP', body: 'Knee - ACL' },
+    tv: {
+      age: 25, g: 10, miss: 10, season: true, week: 8,
+      base: [11.5, 10.8, 10.1], nxt: [180, 170, 160],
+      ros: [0, 0, 0], share: 0,
+      pre: { ppr: { qb1: [11, 10], sflex: [11, 10] }, half: { qb1: [11, 10], sflex: [11, 10] }, std: { qb1: [11, 10], sflex: [11, 10] } },
+      v: { ppr: { qb1: [0, 0], sflex: [0, 0] }, half: { qb1: [0, 0], sflex: [0, 0] }, std: { qb1: [0, 0], sflex: [0, 0] } },
+      par: { ppr: { qb1: [0, 0], sflex: [0, 0] }, half: { qb1: [0, 0], sflex: [0, 0] }, std: { qb1: [0, 0], sflex: [0, 0] } },
+      inj: { st: 'PUP', body: 'Knee - ACL', ret: null, long: true, miss: 10, note: 'Out for the season' },
+    },
+  };
+  const payload = { injuries: [{ injuries: [{
+    status: 'Active',
+    shortComment: comment,
+    longComment: 'The torn ACL is behind him.',
+    details: { type: '', returnDate: '' },
+    athlete: { displayName: 'Zach Charbonnet' },
+  }] }] };
+  const bundle = {
+    meta: { next_week: 8, season: 2026, trade: data.meta.trade },
+    schedule: { 8: [{ date: '2026-11-02', home: 'SEA', away: 'CHI' }] },
+    roles: { 8: { out: ['zach'], chart: {} } },
+    players: [star],
+  };
+  assert.equal(trade.applyPractice(bundle, payload), 1);
+  assert.equal(star.sl_inj, null);
+  assert.equal(star.cleared, true);
+  assert.deepEqual(bundle.roles[8].out, []);
+  assert.equal(star.tv.season, false);
+  assert.equal(star.tv.inj.long, false);
+  assert.match(star.tv.inj.note, /Not out for the season/);
+  assert.ok(star.tv.v.ppr.qb1[0] > 0, 'redraft ' + star.tv.v.ppr.qb1[0]);
+});
+
 test('a returning lead back keeps a short discount instead of a season zero', () => {
   const star = { id: 'star', name: 'Zach Charbonnet', pos: 'RB', team: 'SEA', g: 0, ppr_pg: 11.09, last_wk: 0, sl_inj: { status: 'PUP', body: 'Knee - ACL' } };
   const fill = { id: 'fill', name: 'Emanuel Wilson', pos: 'RB', team: 'SEA', g: 6, ppr_pg: 9.4, w: { ca: 15.9, tg: 1.6 } };

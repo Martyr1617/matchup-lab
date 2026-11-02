@@ -21,6 +21,16 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Bundle the latest data branch as the offline copy
+        run: |
+          # The app reads projections from the data branch. The file committed
+          # on main is only the fallback, and it had stopped at Week 5. Copy the
+          # published files into the Pages artifact so that fallback, and the
+          # data.json URL on the site, match the hourly refresh.
+          git fetch --depth=1 origin data
+          git show FETCH_HEAD:data.json > site/data.json
+          if git cat-file -e FETCH_HEAD:market.json; then git show FETCH_HEAD:market.json > site/market.json; fi
+          if git cat-file -e FETCH_HEAD:news.json; then git show FETCH_HEAD:news.json > site/news.json; fi
       - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
         with:
           # Creates the Pages site (build type: workflow) when it does not exist yet.

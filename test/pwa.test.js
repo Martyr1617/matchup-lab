@@ -157,6 +157,18 @@ test('defense headers stick below the app chrome and the team column sticks left
   assert.doesNotMatch(block, /background(?:-color)?:\s*(?:transparent|#0b3d24|#f5c518)/i);
 });
 
+test('the site loads the data branch first and Pages bundles that copy', () => {
+  const app = read('app.js');
+  const boot = app.slice(app.indexOf('async function boot'), app.indexOf('\n  boot();'));
+  const remote = boot.indexOf("REMOTE + 'data.json");
+  const local = boot.indexOf("get('data.json?v='");
+  assert.ok(remote > 0 && local > remote, 'bundled data.json is the fallback');
+  assert.match(boot, /20000/);
+  const pages = fs.readFileSync(path.join(__dirname, '../.github/workflows/pages.yml'), 'utf8');
+  assert.match(pages, /git fetch --depth=1 origin data/);
+  assert.match(pages, /git show FETCH_HEAD:data\.json > site\/data\.json/);
+});
+
 test('the page registers the worker and declares an iOS icon', () => {
   const html = read('index.html');
   assert.match(html, /viewport-fit=cover/);

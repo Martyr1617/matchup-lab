@@ -188,8 +188,10 @@ function overlayInjuries(data, sl) {
     const body = sp.injury_body_part;
     if (!status && !body) continue;
     const current = (pl.sl_inj && pl.sl_inj.status) || '';
-    if (severity(status) > severity(current) || (body && /acl|achilles/i.test(body) && severity(current) < 4)) {
-      pl.sl_inj = { status: status || (pl.sl_inj && pl.sl_inj.status) || 'IR', body: body || (pl.sl_inj && pl.sl_inj.body) || null };
+    // A leftover ACL or Achilles note is not a new season-ending tag. Only a
+    // current Out / IR / PUP / Doubtful status is copied onto the player.
+    if (status && severity(status) > severity(current)) {
+      pl.sl_inj = { status, body: body || (pl.sl_inj && pl.sl_inj.body) || null };
       n += 1;
     }
   }
