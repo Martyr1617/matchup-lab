@@ -10,6 +10,70 @@ D = 'data/'
 SKILL_POS = ['QB', 'RB', 'WR', 'TE']
 # Questionable is not unavailable. Doubtful is, matching the lineup page.
 OUT_REPORT = {'out', 'ir', 'injured reserve', 'doubtful', 'pup', 'suspended', 'sus'}
+TEAM_NORM = {'LAR': 'LA', 'WSH': 'WAS', 'JAC': 'JAX', 'OAK': 'LV'}
+
+
+def norm_team(team):
+    text = str(team or '').strip().upper()
+    return TEAM_NORM.get(text, text)
+
+
+def team_from_log(log, schedule):
+    """Team implied by who this player lined up against.
+
+    A week counts when the listed opponent is the other side of that week's
+    game. Two or more weeks, and 60 percent of them, have to agree.
+    """
+    votes = {}
+    seen = 0
+    for game in log or []:
+        if not isinstance(game, dict) or game.get('prior'):
+            continue
+        opp = norm_team(game.get('opp'))
+        if not opp:
+            continue
+        wk = game.get('wk')
+        slate = []
+        if isinstance(schedule, dict):
+            slate = schedule.get(wk) or schedule.get(str(wk)) or []
+        matched = False
+        for item in slate:
+            if not isinstance(item, dict):
+                continue
+            home, away = norm_team(item.get('home')), norm_team(item.get('away'))
+            if opp == home and away:
+                votes[away] = votes.get(away, 0) + 1
+                matched = True
+            elif opp == away and home:
+                votes[home] = votes.get(home, 0) + 1
+                matched = True
+        if matched:
+            seen += 1
+    if seen < 2 or not votes:
+        return ''
+    best = max(votes, key=lambda team: (votes[team], team))
+    if votes[best] < seen * 0.6:
+        return ''
+    return best
+
+
+def reconcile_team(tagged, sleeper, log, schedule):
+    """Prefer the team the games show. Sleeper fills in only when he has not played.
+
+    A stale Sleeper team must not overwrite a season that already happened.
+    A tag that does not match those games loses to the games. With no games,
+    Sleeper's current team replaces a stale tag.
+    """
+    tagged_n = norm_team(tagged)
+    sleeper_n = norm_team(sleeper)
+    if not (sleeper_n.isalpha() and 2 <= len(sleeper_n) <= 3):
+        sleeper_n = ''
+    inferred = team_from_log(log, schedule)
+    if inferred:
+        return inferred
+    if sleeper_n:
+        return sleeper_n
+    return tagged_n
 
 
 def attach_snap_share(players, snaps, pfr_to_gsis, cur_week, decay=0.7):
@@ -600,7 +664,7 @@ def main():
         if gs and isinstance(gs, str) and gs.strip():
             ids_by_gsis[gs.strip()] = {'sl': sid, 'espn': sp_.get('espn_id'), 'yahoo': sp_.get('yahoo_id'),
                                         'inj': sp_.get('injury_status'), 'injb': sp_.get('injury_body_part'),
-                                        'exp': sp_.get('years_exp')}
+                                        'exp': sp_.get('years_exp'), 'team': sp_.get('team')}
     pfr_to_gsis = {}
     try:
         dbi = pd.read_csv(D + 'db_playerids.csv', dtype=str)
@@ -637,6 +701,21 @@ def main():
         cands = by_espn.get(eid) if eid else None
         if cands and len(cands) == 1 and not cands[0]['ids'].get('sl'):
             cands[0]['ids']['sl'] = _s(sid)
+    sl_by_id = {str(sid): sp_ for sid, sp_ in sl.items()}
+    moved = 0
+    for pl in players:
+        sid = pl['ids'].get('sl')
+        sp_ = sl_by_id.get(sid) if sid else None
+        if sp_ is None:
+            sp_ = {}
+            e = ids_by_gsis.get(pl['id'], {})
+            if e.get('team'):
+                sp_ = {'team': e.get('team')}
+        nxt = reconcile_team(pl.get('team'), sp_.get('team'), pl.get('log'), schedule)
+        if nxt and nxt != pl.get('team'):
+            pl['team'] = nxt
+            moved += 1
+    print('team reconciled', moved)
     # Sleeper players without stats in our data (K, DEF, rookies, injured) so rosters can still be displayed
     have = {pl['ids']['sl'] for pl in players if pl['ids']['sl']}
     sl_extra = {}

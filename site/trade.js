@@ -537,6 +537,26 @@
     return '';
   }
 
+  // Off PUP/IR, cleared, or no longer designated. A historical ACL in the
+  // same note does not keep the season-ending tag.
+  const ACTIVATION = /does not carry an injury designation|no injury designation|without an injury designation|cleared to (?:play|return|make)|activated off|removed from (?:the )?(?:pup|ir\b|injured reserve)|off (?:the )?(?:pup|injured reserve)|taken off|will make his (?:regular|season|nfl)|making his (?:regular|season) debut|set to (?:play|debut|return)/;
+
+  function activatedText(text, name) {
+    return phraseNear(text, name, ACTIVATION);
+  }
+
+  function fresherStatus(pl, row) {
+    const baked = (pl && pl.sl_inj && pl.sl_inj.status) || '';
+    const live = (row && row.status) || '';
+    const bakedBody = (pl && pl.sl_inj && pl.sl_inj.body) || '';
+    const liveBody = (row && row.body) || '';
+    const liveClear = /^(active|probable)$/i.test(String(live).trim()) && /pup|\bir\b|injured|\bout\b/i.test(baked);
+    const liveQ = /^questionable$/i.test(String(live).trim()) && /pup|\bir\b|injured/i.test(baked);
+    if (liveClear) return { status: live, body: liveBody, wasOut: true };
+    if (liveQ) return { status: live, body: liveBody || bakedBody, wasOut: false };
+    return { status: baked || live, body: bakedBody || liveBody, wasOut: false };
+  }
+
   function trendingText(text) {
     return /designated to return|practice window|upgraded to limited|trending up|increased practice/.test(String(text || '').toLowerCase());
   }
@@ -616,21 +636,33 @@
       if (reason === 'week' && news.returnWeek) miss = Math.max(cls.kind === 'q' ? 0.25 : 1, news.returnWeek - nextWeek);
       miss = Math.max(0, Math.min(basis, miss));
       const served = lastWeek ? Math.max(0, nextWeek - lastWeek - 1) : (nextWeek > 2 ? nextWeek - 1 : 0);
-      const ramp = miss >= 0.75 && (served >= 2 || cls.kind === 'ir' || cls.kind === 'out');
-      const serious = miss >= 0.75;
-      const ret = miss >= 1 ? nextWeek + Math.ceil(miss) : (news.returnWeek || null);
-      const practice = reason === 'limited' ? 'Limited, trending up' : (reason === 'week' ? 'Returning' : 'Full practice');
+      let ramp = miss >= 0.75 && (served >= 2 || cls.kind === 'ir' || cls.kind === 'out');
+      let serious = miss >= 0.75;
+      let ret = miss >= 1 ? nextWeek + Math.ceil(miss) : (news.returnWeek || null);
+      let practice = reason === 'limited' ? 'Limited, trending up' : (reason === 'week' ? 'Returning' : 'Full practice');
       let note = 'Full practice. Short absence, not out for the season.';
       if (reason === 'limited') note = 'Practice is trending up. Short absence, not out for the season.';
       if (reason === 'week') note = 'Expected back soon. Short absence, not out for the season.';
+      if (reason === 'activated') {
+        miss = 0;
+        ramp = false;
+        serious = false;
+        ret = null;
+        practice = 'Activated';
+        note = 'Activated off the injured list. Not out for the season.';
+      }
       return {
         serious, long: false, miss, eq: gameEq(basis, miss, ramp), full: basis,
         ramp, ret, label, detail, note, kind: cls.kind === 'ok' ? 'q' : cls.kind,
-        practice, practiceBack: true, lead: false,
+        practice, practiceBack: true, lead: false, activated: reason === 'activated',
       };
     }
 
+    const staleOut = cls.long || cls.kind === 'ir' || cls.kind === 'out' || !!input.wasOut;
+    const statusActive = /^(active|probable)$/i.test(String(input.status || '').trim());
+    const activated = staleOut && (activatedText(comment, input.name) || statusActive);
     if (level === 'full' || (level === 'limited' && trending)) return shortReturn(level === 'full' ? 'full' : 'limited');
+    if (activated && !seasonWords) return shortReturn('activated');
     if (news.returnWeek && news.returnWeek <= nextWeek + 1 && (cls.long || cls.kind === 'ir' || cls.kind === 'out')) return shortReturn('week');
     const soft = phraseNear(comment, input.name, /isn'?t believed to be a long-term|not believed to be a long-term|not a long-term|able to play|expected to play/);
     if (!(soft && (cls.kind === 'q' || cls.kind === 'd')) && cls.long) return gone;
@@ -734,9 +766,11 @@
     const nextWeek = (data.meta && data.meta.next_week) || (pl.tv && pl.tv.week) || 1;
     const season = data.meta && data.meta.season;
     const returnFar = !!(row && row.returnDate && season && Number(String(row.returnDate).slice(0, 4)) > Number(season));
+    const fresh = fresherStatus(pl, row);
     return {
-      status: (pl.sl_inj && pl.sl_inj.status) || (row && row.status) || '',
-      body: (pl.sl_inj && pl.sl_inj.body) || (row && row.body) || '',
+      status: fresh.status,
+      body: fresh.body,
+      wasOut: !!fresh.wasOut,
       lastWeek: pl.last_wk || 0,
       nextWeek,
       basis: (pl.tv && pl.tv.g) || gamesBasis(data),
@@ -817,6 +851,21 @@
     return true;
   }
 
+  function clearStaleTag(pl, data) {
+    if (!pl) return;
+    pl.cleared = true;
+    const raw = (pl.sl_inj && pl.sl_inj.status) || '';
+    if (/pup|\bir\b|injured|\bout\b/i.test(raw)) pl.sl_inj = null;
+    if (pl.inj && /pup|\bir\b|injured|\bout\b/i.test(String(pl.inj.status || pl.inj.st || ''))) {
+      pl.inj = Object.assign({}, pl.inj, { status: null, st: null });
+    }
+    const roles = (data && data.roles) || {};
+    for (const wk of Object.keys(roles)) {
+      const row = roles[wk];
+      if (row && Array.isArray(row.out)) row.out = row.out.filter(id => String(id) !== String(pl.id));
+    }
+  }
+
   function applyPractice(data, payload) {
     if (!data || !payload || !(data.players || []).length) return 0;
     const byName = new Map();
@@ -825,9 +874,11 @@
     for (const row of readEspnPractice(payload)) {
       const pl = byName.get(foldName(row.name));
       if (!pl || !pl.tv) continue;
-      const plan = leadNote(injuryPlan(practiceInput(pl, row, data, [])));
+      const input = practiceInput(pl, row, data, []);
+      const plan = leadNote(injuryPlan(input));
       if (plan.practiceBack) plan.lead = isLead(pl, data.players, {});
       leadNote(plan);
+      if (!plan.long && (plan.practiceBack || input.wasOut)) clearStaleTag(pl, data);
       const bakedMiss = (pl.tv.season || (pl.tv.inj && pl.tv.inj.long)) ? Infinity : num(pl.tv.miss);
       const falseSeason = !!(pl.tv.season || (pl.tv.inj && pl.tv.inj.long)) && !plan.long;
       const shorter = plan.practiceBack && bakedMiss > plan.miss + 0.05;

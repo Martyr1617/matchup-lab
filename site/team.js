@@ -231,7 +231,8 @@
   function evalPlayer(p0, S, week, rosterId) {
     const p = p0.ml && p0.src !== 'espn' ? { ...p0, inj: (ML.injuryOf(p0.ml) || {}).status || null } : p0;
     const r = { ...p, proj: null, pr: null, status: 'ok', note: '', value: 0, locked: false, livePts: null, gamePhase: null };
-    if (p.ml && p.ml.tradeOnly) { r.status = 'np'; r.note = 'No weekly projection'; }
+    const returner = p.ml && window.MLModel && window.MLModel.returnerReady && window.MLModel.returnerReady(p.ml, week, ML.state);
+    if (p.ml && p.ml.tradeOnly && !returner) { r.status = 'np'; r.note = 'No weekly projection'; }
     else if (p.ml) {
       const pr = ML.project(p.ml, week, S);
       r.pr = pr;
@@ -407,7 +408,7 @@
       for (const t of league.teams) for (const p of t.players) if (p.ml) rostered.add(p.ml.id);
       const free = [];
       for (const p of ML.state.data.players) {
-        if (p.tradeOnly) continue;
+        if (p.tradeOnly && !(window.MLModel && window.MLModel.returnerReady && window.MLModel.returnerReady(p, week, ML.state))) continue;
         if (rostered.has(p.id)) continue;
         if (ML.isOut(p)) continue;
         if (p.last_wk < ML.state.data.meta.last_completed_week - 1) continue;

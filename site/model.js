@@ -70,7 +70,7 @@
     return { mean: m, sd, cdf, quantile, pdf, pOver: x => 1 - cdf(x) };
   }
 
-  const blend = (num, den, prior, k) => (num + prior * k) / (den + k);
+  const blend = (num, den, prior, k) => ((Number(num) || 0) + prior * k) / ((Number(den) || 0) + k);
   const pw = (f, e) => Math.pow(f ?? 1, e);
   const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
   const f1 = n => (Math.round(n * 10) / 10).toFixed(1);
@@ -324,6 +324,24 @@
         }
         w[key] = best;
       }
+      // A charted starter who has not played still has a healthy prior. Use it
+      // once he is active, and give the fill-in's extra carries back.
+      if (id === active && !seasonTagged(pl)) {
+        const stat = priorCounting(pl.pos, workloadPrior(pl, { data }));
+        const thinLine = pl.pos === 'QB' ? QB_INHERIT_PA : (thin && thin[1]);
+        if (stat && thinLine && (Number(w[stat.key]) || 0) < thinLine && stat.value > (Number(w[stat.key]) || 0)) {
+          w[stat.key] = stat.value;
+        }
+      } else if (pl.pos === 'RB' && id !== active && !ruledOut.has(active)) {
+        const leader = mates.get(active);
+        const leaderPrior = leader && priorCounting('RB', workloadPrior(leader, { data }));
+        const leaderCa = leader ? (Number((leader.w || {}).ca) || 0) : 0;
+        if (leader && !seasonTagged(leader) && leaderPrior && leaderCa < THIN_VOLUME.RB[1]) {
+          const own = workloadPrior(pl, { data });
+          const floor = own && Number(own.ca);
+          if (Number.isFinite(floor) && floor >= 6 && (Number(w.ca) || 0) > floor + 4) w.ca = floor;
+        }
+      }
     }
     // Optional extra pull for a charted non-starter behind a healthy starter.
     // The default is zero, which leaves published usage alone.
@@ -343,6 +361,37 @@
     return HURT_STATUS.test(String(raw).trim());
   }
 
+  // A blank or activated status is not a season-ending tag. PUP, IR, and Out
+  // still are, until a practice report clears them.
+  function seasonTagged(pl) {
+    if (!pl || pl.cleared) return false;
+    return regUnavailable(pl);
+  }
+
+  // Starter-sized prior usage. A committee prior below this does not invent a
+  // weekly line for someone who has not played.
+  function priorCounting(pos, prior) {
+    if (!prior) return null;
+    if (pos === 'RB' && Number(prior.ca) >= 8) return { key: 'ca', value: Number(prior.ca) };
+    if (pos === 'QB' && Number(prior.pa) >= 18) return { key: 'pa', value: Number(prior.pa) };
+    return null;
+  }
+
+  // No 2026 usage, not ruled out, and a healthy starter prior. The weekly
+  // projection uses that prior instead of a blank line.
+  function returnerReady(pl, week, env) {
+    if (!pl || !pl.team || seasonTagged(pl)) return false;
+    const data = env && env.data;
+    if (!data || !gameFor(pl.team, week, data)) return false;
+    const roles = data.roles && (data.roles[String(week)] || data.roles[week]);
+    const ruled = new Set(((roles && roles.out) || []).map(String));
+    if (pl.id != null && ruled.has(String(pl.id))) return false;
+    const w = pl.w || {};
+    const touches = (Number(w.pa) || 0) + (Number(w.ca) || 0) + (Number(w.tg) || 0);
+    if (touches >= 2) return false;
+    return !!priorCounting(pl.pos, workloadPrior(pl, env));
+  }
+
   // Regression lists are buy and fade candidates, so they only include someone
   // who is actually in a role. The quarterback is the first healthy name on
   // the depth chart. A running back, receiver, or tight end needs a real snap
@@ -356,6 +405,7 @@
   }
 
   function regUnavailable(pl) {
+    if (pl && pl.cleared) return false;
     return REG_OUT.test(regStatus(pl));
   }
 
@@ -493,7 +543,27 @@
     const homeAdj = home ? 1.02 : 0.98;
     const o = tuneOf(env);
     const k = n => n * o.effK;
-    const w = roleVolume(pl, week, D, o), t = pl.t;
+    const returning = returnerReady(pl, week, env);
+    const w = roleVolume(pl, week, D, o);
+    let t = pl.t || {};
+    let g = Number(pl.g) || 0;
+    if (returning) {
+      const prior = workloadPrior(pl, env);
+      const totals = prior && prior.t;
+      const counted = (Number(t.ca) || 0) + (Number(t.pa) || 0) + (Number(t.tg) || 0);
+      if (totals && counted < 6) {
+        t = Object.assign({}, totals);
+        if (!(g > 0)) g = 16;
+      }
+      if ((Number(w.tg) || 0) < 1 && prior && prior.ts != null && pl.pos !== 'QB') {
+        const off = D.team_off && D.team_off[pl.team];
+        const teamPa = off && Number(off.pass_att_pg) > 0 ? Number(off.pass_att_pg) : 32;
+        w.tg = Number(prior.ts) * teamPa;
+      }
+    }
+    for (const key of ['pa', 'ca', 'tg', 'py', 'ry', 'rcy', 'ptd', 'int', 'rtd', 'rc', 'rctd']) {
+      w[key] = Number(w[key]) || 0;
+    }
     // Snap share is attempts or targets at this position's volume-per-snap
     // rate. No snap row means the published usage line is left alone.
     if (o.snapBlend > 0 && pl.snapImplied) {
@@ -533,8 +603,8 @@
     const py = pa * ypa;
     const ptd = pa * blend(t.ptd, t.pa, L.pass_td_rate, k(80)) * pw(F.pass_td, 0.5) * (pl.pos === 'QB' ? posF : 1) * wpHalf;
     const intc = pa * blend(t.int, t.pa, L.int_rate, k(100)) * pw(F.int, 0.5) / wpHalf;
-    const fl = (t.fl + 0.06 * 4) / (pl.g + 4) * wx.fl;
-    const two = t.two / pl.g * 0.5;
+    const fl = ((Number(t.fl) || 0) + 0.06 * 4) / ((g > 0 ? g : 0) + 4) * wx.fl;
+    const two = g > 0 ? (Number(t.two) || 0) / g * 0.5 : 0;
 
     const posBonus = S['bonus_' + pl.pos] || 0;
     const ptsOf = (k) => k.rc * posBonus + k.py * S.py + k.ptd * S.ptd + k.int * S.int + k.ry * S.ry + k.rtd * S.rtd + k.rc * S.rec + k.rcy * S.rcy + k.rctd * S.rctd + k.fl * S.fl + k.two * S.two;
@@ -612,13 +682,14 @@
       pts = ptsOf(C);
     }
     const comps = C;
-    const dist = makeDist(pts, pl.cv);
+    const cv = Number.isFinite(Number(pl.cv)) ? Number(pl.cv) : (returning ? ({ QB: 0.38, RB: 0.5, WR: 0.58, TE: 0.65 }[pl.pos] || 0.5) : 0);
+    const dist = makeDist(pts, cv);
     const grade = matchupGrade(def, pl.pos);
     const bb = boomBust(pl.pos, S, dist);
     const role = usesRoleFloor(pl, week, scoringKey, env);
     return { bye: false, wx, wxDelta, game, home, opp, def, comps, base: b, pts, basePts, modelPts, modelC, mktPts, diverge, pm, propUsed, vg, itt, bb,
       dist, grade, floor: outcomeFloor(pts, pl.cv, pl.pos, role), ceil: dist.quantile(0.9), roleFloor: role,
-      p15: dist.pOver(15), p20: dist.pOver(20), reg: regFlag(pl), defNote: inj.note };
+      p15: dist.pOver(15), p20: dist.pOver(20), reg: regFlag(pl), defNote: inj.note, returning };
   }
 
   // Display-only healthy-usage projection. The official project() result is
@@ -812,5 +883,5 @@
     }
   }
 
-  return { SCORING, lgamma, gammaP, makeDist, PREDICTIVE_SPREAD, SNAP_BLEND, HEALTHY_SPREAD, ROLE_FLOOR_N, FULL_WORK_GAP, FULL_WORK_RATIO, project, fullWorkload, outcomeFloor, hurtStatus, thinRole, regRole, gameFor, weatherAdj, vegasFor, propsFor, propMean, boomBust, matchupGrade, normName, blend };
+  return { SCORING, lgamma, gammaP, makeDist, PREDICTIVE_SPREAD, SNAP_BLEND, HEALTHY_SPREAD, ROLE_FLOOR_N, FULL_WORK_GAP, FULL_WORK_RATIO, project, fullWorkload, outcomeFloor, hurtStatus, thinRole, regRole, returnerReady, gameFor, weatherAdj, vegasFor, propsFor, propMean, boomBust, matchupGrade, normName, blend };
 });
