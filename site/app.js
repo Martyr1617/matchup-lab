@@ -812,7 +812,7 @@
     const outP = injP && OUT_STATUS.test(injP.status.trim());
     const injTxt = injP ? `${esc(injP.status)}${injP.injury ? ' (' + esc(injP.injury) + ')' : ''}${injP.live ? ' per ESPN' : ''}` : '';
     const missedNote = practiceBack(pl) ? `<div class="notice">${esc(pl.tv.inj.note || pl.tv.inj.practice)}</div>`
-      : outP ? `<div class="notice bad">⚠ ${esc(pl.name)} is listed ${injTxt}. Projection shows his output if he were active.</div>`
+      : outP ? `<div class="notice bad">⚠ ${esc(pl.name)} is listed ${injTxt}. The projection is 0 because he is not expected to play.</div>`
       : missedLast(pl) ? `<div class="notice">⚠ ${esc(pl.name)} did not play in Week ${lc}${injP ? ' — currently ' + injTxt : ''}. Projection assumes a normal workload; verify status before kickoff.</div>`
       : injP ? `<div class="notice">⚠ Injury status: ${injTxt}.</div>` : '';
 

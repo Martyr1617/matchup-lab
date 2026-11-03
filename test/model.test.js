@@ -156,10 +156,11 @@ test('an unavailable charted starter keeps his own volume and a healthy QB1 caps
   assert.ok(free.comps.pa > 15, free.comps.pa);
   assert.ok(capped.comps.pa < 6, capped.comps.pa);
   assert.equal(lock.w.pa, 24);
-  // A charted starter who already throws a starter's volume does not cap teammates.
+  // A healthy starter who is actually throwing still caps the backup. The
+  // backup's recent average can be a starter's from weeks he was playing.
   const busy = { ...darnold, w: { ...darnold.w, pa: 30 }, t: { ...darnold.t, pa: 30 }, log: [{ wk: 1, pa: 30 }] };
   const kept = project(lock, 3, 'ppr', seaWeek({ out: [], chart: charted.chart }, [busy, lock]));
-  assert.ok(kept.comps.pa > 15, kept.comps.pa);
+  assert.ok(kept.comps.pa < 6, kept.comps.pa);
 });
 
 test('the next charted receiver inherits an unavailable teammate only when his own usage is thin', () => {
@@ -441,6 +442,50 @@ test('a cleared back with no 2026 games projects his healthy prior, and the fill
   assert.equal(regRole(played, 8, data), true);
   played.cleared = false;
   assert.equal(regRole(played, 8, data), false);
+});
+
+test('out, IR, PUP, and suspended project zero, and doubtful is a small fraction', () => {
+  const base = project(qb, 6, 'ppr', env());
+  assert.ok(base.pts > 8, base.pts);
+  for (const status of ['Out', 'IR', 'PUP', 'Suspended']) {
+    const pr = project({ ...qb, sl_inj: { status } }, 6, 'ppr', env());
+    assert.equal(pr.sit, true, status);
+    assert.equal(pr.pts, 0, status);
+    assert.equal(pr.comps.pa, 0, status);
+  }
+  const ruled = env();
+  ruled.data.roles = { 6: { out: [qb.id], chart: { BUF: { QB: [qb.id] } } } };
+  const fromChart = project(qb, 6, 'ppr', ruled);
+  assert.equal(fromChart.pts, 0);
+  const doubtful = project({ ...qb, sl_inj: { status: 'Doubtful' } }, 6, 'ppr', env());
+  assert.equal(doubtful.sit, false);
+  assert.ok(Math.abs(doubtful.pts - base.pts * 0.2) < 0.05, `${doubtful.pts} vs ${base.pts}`);
+  const q = project({ ...qb, sl_inj: { status: 'Questionable' } }, 6, 'ppr', env());
+  assert.ok(Math.abs(q.pts - base.pts) < 0.05, q.pts);
+  const back = project({ ...qb, sl_inj: { status: 'IR', body: 'Knee' }, cleared: true }, 6, 'ppr', env());
+  assert.equal(back.sit, false);
+  assert.ok(back.pts > 8, back.pts);
+  assert.equal(fullWorkload({ ...qb, sl_inj: { status: 'Out' } }, 6, 'ppr', env()), null);
+});
+
+test('a third running back behind healthy starters does not keep a starter line', () => {
+  const e = env();
+  e.data.roles = { 6: { out: [], chart: { BUF: { RB: ['rb1', 'rb2', 'rb3'] } } } };
+  const pack = (id, ca) => ({
+    id, name: id, pos: 'RB', team: 'BUF', g: 4, cv: 0.45,
+    w: { pa: 0, py: 0, ptd: 0, int: 0, ca, ry: ca * 4, rtd: 0.2, tg: 2, rc: 1, rcy: 8, rctd: 0 },
+    t: { pa: 0, py: 0, ptd: 0, int: 0, ca: ca * 4, ry: ca * 16, rtd: 1, tg: 8, rc: 4, rcy: 32, rctd: 0, fl: 0, two: 0 },
+    log: [1, 2, 3, 4].map(wk => ({ wk, ca, tg: 2 })),
+  });
+  const rb1 = pack('rb1', 16);
+  const rb2 = pack('rb2', 8);
+  const rb3 = pack('rb3', 14);
+  e.data.players = [rb1, rb2, rb3];
+  const deep = project(rb3, 6, 'ppr', e);
+  const lead = project(rb1, 6, 'ppr', e);
+  assert.ok(deep.comps.ca < 5, 'deep carries ' + deep.comps.ca);
+  assert.ok(lead.comps.ca > 12, 'lead carries ' + lead.comps.ca);
+  assert.ok(deep.pts < lead.pts * 0.4, `${deep.pts} vs ${lead.pts}`);
 });
 
 test('the regression cards use the playing-role filter', () => {
