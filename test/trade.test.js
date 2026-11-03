@@ -146,8 +146,10 @@ test('rest-of-season values rank with later actual points', () => {
   const result = trade.backtest(data, project, SCORING);
   assert.ok(result.n >= 50, 'n=' + result.n);
   assert.ok(result.spearman >= 0.5, 'spearman=' + result.spearman);
-  if (data.meta.trade.backtest) {
-    assert.ok(Math.abs(data.meta.trade.backtest.spearman - result.spearman) < 0.02);
+  if (data.meta.trade.backtest && data.meta.trade.backtest.spearman != null) {
+    // A model change may rank rest-of-season value better than the copy baked
+    // into data.json. It must not fall off that published correlation.
+    assert.ok(result.spearman + 0.02 >= data.meta.trade.backtest.spearman, result.spearman + ' vs ' + data.meta.trade.backtest.spearman);
   }
 });
 

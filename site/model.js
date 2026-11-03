@@ -302,14 +302,10 @@
           if (pa != null && pa > best) best = pa;
         }
         w.pa = best;
-      } else if (id !== chart[0] && !ruledOut.has(chart[0]) && own > QB_CAP_PA) {
-        // Cap only when the charted starter's own line is still a backup's,
-        // which is the same week he takes over that teammate's volume. A
-        // chart that still lists a benched quarterback first must not wipe
-        // out the player who has actually been throwing.
-        const starter = mates.get(chart[0]);
-        const starterPa = starter && priorWeighted(starter, week, 'pa', tune);
-        if (starterPa != null && starterPa < QB_INHERIT_PA) w.pa = QB_BACKUP_PA;
+      } else if (id !== active && active && !ruledOut.has(active)) {
+        // Anyone behind the healthy starter is a backup, including a quarterback
+        // whose recent average is still a starter's from weeks he was playing.
+        w.pa = Math.min(own, QB_BACKUP_PA);
       }
     } else {
       const thin = THIN_VOLUME[pl.pos];
@@ -332,14 +328,30 @@
         if (stat && thinLine && (Number(w[stat.key]) || 0) < thinLine && stat.value > (Number(w[stat.key]) || 0)) {
           w[stat.key] = stat.value;
         }
-      } else if (pl.pos === 'RB' && id !== active && !ruledOut.has(active)) {
+      } else if (pl.pos !== 'QB' && id !== active && active && !ruledOut.has(active)) {
         const leader = mates.get(active);
-        const leaderPrior = leader && priorCounting('RB', workloadPrior(leader, { data }));
+        const healthy = chart.filter(pid => !ruledOut.has(pid) && !(mates.get(pid) && seasonTagged(mates.get(pid))));
+        const idx = healthy.indexOf(id);
         const leaderCa = leader ? (Number((leader.w || {}).ca) || 0) : 0;
-        if (leader && !seasonTagged(leader) && leaderPrior && leaderCa < THIN_VOLUME.RB[1]) {
+        const leaderPrior = leader && priorCounting(leader.pos, workloadPrior(leader, { data }));
+        if (leader && !seasonTagged(leader) && leaderPrior && leaderCa < (THIN_VOLUME[leader.pos] ? THIN_VOLUME[leader.pos][1] : 6) && pl.pos === 'RB') {
           const own = workloadPrior(pl, { data });
           const floor = own && Number(own.ca);
           if (Number.isFinite(floor) && floor >= 6 && (Number(w.ca) || 0) > floor + 4) w.ca = floor;
+        }
+        // Third running back, fifth receiver, third tight end: a few touches, not a starter line.
+        if (idx >= 2 && (pl.pos === 'RB' || pl.pos === 'TE')) {
+          if (pl.pos === 'RB') w.ca = Math.min(Number(w.ca) || 0, 3);
+          w.tg = Math.min(Number(w.tg) || 0, pl.pos === 'RB' ? 1.5 : 2);
+        } else if (pl.pos === 'WR' && idx >= 4) {
+          w.tg = Math.min(Number(w.tg) || 0, 2);
+        } else if (pl.pos === 'RB' && idx === 1 && leader && !seasonTagged(leader)) {
+          const lead = Math.max(leaderCa, leaderPrior && leader.pos === 'RB' ? leaderPrior.value : 0);
+          if (lead >= 8 && (Number(w.ca) || 0) > 10) {
+            const own = workloadPrior(pl, { data });
+            const cap = Math.min(10, Math.max(4, own && Number(own.ca) > 0 ? Number(own.ca) : 8));
+            w.ca = Math.min(Number(w.ca) || 0, cap);
+          }
         }
       }
     }
@@ -379,6 +391,41 @@
 
   // No 2026 usage, not ruled out, and a healthy starter prior. The weekly
   // projection uses that prior instead of a blank line.
+  const SIT_STATUS = /^(out|ir|injured reserve|injury reserve|pup|sus|suspended|suspension|inactive|na|cov)$/i;
+  const DOUBTFUL_PLAY = 0.2;
+
+  // Out, IR, PUP, and suspended do not play. Doubtful almost never does.
+  // A practice report that cleared a stale tag (pl.cleared) keeps the normal line.
+  function playChance(pl, week, data) {
+    if (pl && pl.cleared) return 1;
+    const raw = regStatus(pl);
+    if (SIT_STATUS.test(raw)) return 0;
+    if (/^doubtful$/i.test(raw)) return DOUBTFUL_PLAY;
+    const roles = data && data.roles && (data.roles[String(week)] || data.roles[week]);
+    const ruled = new Set(((roles && roles.out) || []).map(String));
+    if (pl && pl.id != null && ruled.has(String(pl.id))) return 0;
+    return 1;
+  }
+
+  function depthCaps(pl, week, data) {
+    const roles = data && data.roles && (data.roles[String(week)] || data.roles[week]);
+    if (!roles || !pl || !pl.team || pl.id == null) return null;
+    const chart = (((roles.chart || {})[pl.team] || {})[pl.pos] || []).map(String);
+    const id = String(pl.id);
+    if (!chart.includes(id)) return null;
+    const ruled = new Set((roles.out || []).map(String));
+    const mates = playersById(data);
+    const healthy = chart.filter(pid => !ruled.has(pid) && !(mates.get(pid) && seasonTagged(mates.get(pid))));
+    const idx = healthy.indexOf(id);
+    if (idx <= 0) return null;
+    if (pl.pos === 'QB') return { pa: QB_BACKUP_PA, ca: 1.5 };
+    if (pl.pos === 'RB' && idx >= 2) return { ca: 3, tg: 1.5 };
+    if (pl.pos === 'TE' && idx >= 2) return { tg: 2 };
+    if (pl.pos === 'WR' && idx >= 4) return { tg: 2 };
+    if (pl.pos === 'RB' && idx === 1) return { ca: 10 };
+    return null;
+  }
+
   function returnerReady(pl, week, env) {
     if (!pl || !pl.team || seasonTagged(pl)) return false;
     const data = env && env.data;
@@ -573,6 +620,11 @@
       if (pl.pos === 'RB') { w.ca = mix(w.ca, s.ca); w.tg = mix(w.tg, s.tg); }
       if (pl.pos === 'WR' || pl.pos === 'TE') w.tg = mix(w.tg, s.tg);
     }
+    // Snap share can put a backup's old starter volume back. The depth chart wins.
+    const caps = depthCaps(pl, week, D);
+    if (caps) {
+      for (const key of Object.keys(caps)) w[key] = Math.min(Number(w[key]) || 0, caps[key]);
+    }
     const yptPrior = posPrior(D, pl.pos, 'rec_yds_pg', 'tgt_pg', L.ypt);
     const rctdPrior = posPrior(D, pl.pos, 'rec_td_pg', 'tgt_pg', L.rec_td_rate);
     const wx = weatherAdj(game, env.wx || {}), wp = wx.pass, wpHalf = Math.sqrt(wx.pass);
@@ -673,6 +725,11 @@
       }
     }
     let pts = ptsOf(C);
+    const play = playChance(pl, week, D);
+    if (play !== 1) {
+      for (const key of Object.keys(C)) C[key] *= play;
+      pts *= play;
+    }
     // Equal-weight blend of the usage projection with trailing actual points.
     // Components scale with the blend so the player page still adds up.
     if (o.pprBlend > 0 && pl.trail != null && Number.isFinite(pl.trail) && pts > 0.5) {
@@ -689,7 +746,7 @@
     const role = usesRoleFloor(pl, week, scoringKey, env);
     return { bye: false, wx, wxDelta, game, home, opp, def, comps, base: b, pts, basePts, modelPts, modelC, mktPts, diverge, pm, propUsed, vg, itt, bb,
       dist, grade, floor: outcomeFloor(pts, pl.cv, pl.pos, role), ceil: dist.quantile(0.9), roleFloor: role,
-      p15: dist.pOver(15), p20: dist.pOver(20), reg: regFlag(pl), defNote: inj.note, returning };
+      p15: dist.pOver(15), p20: dist.pOver(20), reg: regFlag(pl), defNote: inj.note, returning, sit: play === 0, play };
   }
 
   // Display-only healthy-usage projection. The official project() result is
@@ -814,7 +871,7 @@
       const collapsed = mine.flags.some(Boolean);
       if (!missed && !collapsed) return store(null);
       const official = project(pl, week, scoringKey, env);
-      if (!official || official.bye || !Number.isFinite(official.pts)) return store(null);
+      if (!official || official.bye || official.sit || !Number.isFinite(official.pts)) return store(null);
       const prior = workloadPrior(pl, env);
       const off = env.data.team_off && env.data.team_off[pl.team];
       const teamPa = off && Number(off.pass_att_pg) > 0 ? Number(off.pass_att_pg) : 32;
@@ -883,5 +940,5 @@
     }
   }
 
-  return { SCORING, lgamma, gammaP, makeDist, PREDICTIVE_SPREAD, SNAP_BLEND, HEALTHY_SPREAD, ROLE_FLOOR_N, FULL_WORK_GAP, FULL_WORK_RATIO, project, fullWorkload, outcomeFloor, hurtStatus, thinRole, regRole, returnerReady, gameFor, weatherAdj, vegasFor, propsFor, propMean, boomBust, matchupGrade, normName, blend };
+  return { SCORING, lgamma, gammaP, makeDist, PREDICTIVE_SPREAD, SNAP_BLEND, HEALTHY_SPREAD, ROLE_FLOOR_N, FULL_WORK_GAP, FULL_WORK_RATIO, DOUBTFUL_PLAY, project, fullWorkload, outcomeFloor, hurtStatus, thinRole, regRole, returnerReady, playChance, gameFor, weatherAdj, vegasFor, propsFor, propMean, boomBust, matchupGrade, normName, blend };
 });

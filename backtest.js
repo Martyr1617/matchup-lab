@@ -65,6 +65,10 @@ function snapshot(pl, week) {
     g: prior.length,
     cv,
     adv: null,
+    // Today's injury tag is not what he was in an earlier week.
+    sl_inj: null,
+    inj: null,
+    cleared: false,
     snapImplied: null,
     snap: seen && sw ? ss / sw : null,
     w: {
