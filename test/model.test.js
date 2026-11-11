@@ -53,6 +53,17 @@ test('normal outcome quantiles match a widened CV', () => {
   assert.ok(dist.pdf(15) > dist.pdf(15 + sd));
 });
 
+test('a quarterback uses half of the game-script move', () => {
+  const plain = project(qb, 6, 'ppr', env());
+  const full = project(qb, 6, 'ppr', Object.assign(env(), { tune: { qbVegas: 1 } }));
+  const none = project(qb, 6, 'ppr', Object.assign(env(), { tune: { qbVegas: 0 } }));
+  const ordered = [none.pts, plain.pts, full.pts].every((n, i, arr) => i === 0 || arr[i - 1] <= n + 1e-9)
+    || [none.pts, plain.pts, full.pts].every((n, i, arr) => i === 0 || arr[i - 1] >= n - 1e-9);
+  assert.ok(ordered, [none.pts, plain.pts, full.pts].join(' '));
+  assert.ok(Math.abs(plain.pts - (none.pts + full.pts) / 2) < 0.35, [none.pts, plain.pts, full.pts].join(' '));
+  assert.ok(Math.abs(plain.pts - full.pts) > 0.05);
+});
+
 test('project scores a starter and sends a bye team to zero', () => {
   const pr = project(qb, 6, 'ppr', env());
   assert.equal(pr.bye, false);
