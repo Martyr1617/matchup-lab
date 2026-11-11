@@ -698,16 +698,19 @@ def collect_live(repo, now):
         site_error = None
     except Exception as exc:  # noqa: BLE001
         site_status, live_ver, site_error = None, None, str(exc)
-    try:
-        _, html = _fetch(f'https://raw.githubusercontent.com/{repo}/main/site/index.html?t={int(now.timestamp())}')
-        repo_ver = build_version(html.decode('utf-8', 'replace'))
-    except Exception as exc:  # noqa: BLE001
-        repo_ver = None
-        problems_fetch.append(f"The build id on main could not be read ({exc}).")
     refresh_runs = _load_runs('refresh.yml', repo)
     deploy_runs = _load_runs('pages.yml', repo)
     commit = _main_commit(repo)
     main_at = parse_time(commit['date'])
+    # The branch URL on raw.githubusercontent.com can keep an older index.html
+    # after a push. The commit SHA is immutable, so the build id matches git.
+    try:
+        sha = commit.get('sha')
+        _, html = _fetch(f'https://raw.githubusercontent.com/{repo}/{sha}/site/index.html')
+        repo_ver = build_version(html.decode('utf-8', 'replace'))
+    except Exception as exc:  # noqa: BLE001
+        repo_ver = None
+        problems_fetch.append(f"The build id on main could not be read ({exc}).")
     site_changed = _site_changed(repo, deploy_runs, commit.get('sha'))
     problems = problems_fetch + evaluate(
         data, market, rows, refresh_runs, deploy_runs,
