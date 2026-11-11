@@ -163,6 +163,10 @@ def test_deploy_allows_a_push_that_is_still_publishing():
     stale_main = NOW - timedelta(hours=5)
     text = ' '.join(health.check_deploy(runs, 'new', stale_main, NOW))
     assert 'older commit' in text
+    assert health.check_deploy(runs, 'new', stale_main, NOW, site_changed=False) == []
+    assert health.site_files_changed(['.last_refresh']) is False
+    assert health.site_files_changed(['site/app.js']) is True
+    assert health.site_files_changed(['.github/workflows/pages.yml']) is True
     runs.append(_run('2026-10-20T17:00:00Z', conclusion='failure', sha='new'))
     assert 'not success' in ' '.join(health.check_deploy(runs, 'new', NOW, NOW))
     assert health.check_deploy([_run('2026-10-20T17:10:00Z', sha='new')], 'new', NOW, NOW) == []
