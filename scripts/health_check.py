@@ -375,9 +375,27 @@ def check_refresh(runs, now):
     return problems
 
 
-def check_deploy(runs, main_sha, main_at, now):
+def site_files_changed(paths):
+    """True when a commit would change the Pages artifact.
+
+    The keepalive commit only writes .last_refresh, and it is pushed with the
+    workflow token, which does not start the Pages workflow. Main moving past
+    the last deploy is then expected, not a stale site.
+    """
+    for path in paths or []:
+        text = str(path).replace('\\', '/')
+        if text == '.github/workflows/pages.yml' or text.startswith('site/'):
+            return True
+    return False
+
+
+def check_deploy(runs, main_sha, main_at, now, site_changed=None):
     """Pages deploys on push, not every hour. Fail a failed deploy, or a commit
-    that has been sitting unpublished for more than about 3 hours."""
+    that has been sitting unpublished for more than about 3 hours.
+
+    site_changed False means the commits since the last deploy do not touch
+    the published site, so there is nothing new for Pages to ship.
+    """
     if not runs:
         return ['The Pages deploy has no runs, so the live site may never have been published.']
     completed = []
@@ -398,6 +416,8 @@ def check_deploy(runs, main_sha, main_at, now):
             f"{latest.get('url') or ''}".rstrip()
         ]
     if not main_sha or latest.get('headSha') == main_sha:
+        return []
+    if site_changed is False:
         return []
     age = now - main_at if main_at is not None else GAP + timedelta(hours=1)
     publishing = any(
@@ -573,6 +593,44 @@ def _main_commit(repo):
     return json.loads(proc.stdout)
 
 
+def _latest_deploy_sha(runs):
+    completed = []
+    for run in runs or []:
+        if run.get('status') != 'completed' or run.get('conclusion') != 'success':
+            continue
+        try:
+            parse_time(run.get('createdAt'))
+        except (TypeError, ValueError):
+            continue
+        completed.append(run)
+    if not completed:
+        return None
+    return max(completed, key=lambda run: parse_time(run['createdAt'])).get('headSha')
+
+
+def _site_changed(repo, deploy_runs, main_sha):
+    """False when main is ahead of Pages only by commits that do not publish.
+
+    None when the compare cannot be read, so the age check still fails closed.
+    """
+    deploy_sha = _latest_deploy_sha(deploy_runs)
+    if not deploy_sha or not main_sha or deploy_sha == main_sha:
+        return False
+    proc = _gh([
+        'api', f'repos/{repo}/compare/{deploy_sha}...{main_sha}',
+        '--jq', '[.files[].filename]',
+    ], check=False)
+    if proc.returncode != 0 or not (proc.stdout or '').strip():
+        return None
+    try:
+        paths = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(paths, list):
+        return None
+    return site_files_changed(paths)
+
+
 def project_rows(data_path, market_path):
     proc = subprocess.run(
         ['node', 'scripts/health_projections.js', str(data_path), str(market_path or '')],
@@ -583,7 +641,7 @@ def project_rows(data_path, market_path):
     return json.loads(proc.stdout).get('rows') or []
 
 
-def evaluate(data, market, rows, refresh_runs, deploy_runs, main_sha, main_at, site_status, live_ver, repo_ver, now, site_error=None):
+def evaluate(data, market, rows, refresh_runs, deploy_runs, main_sha, main_at, site_status, live_ver, repo_ver, now, site_error=None, site_changed=None):
     problems = []
     if data is None:
         problems.append('data.json could not be downloaded from the data branch.')
@@ -595,7 +653,7 @@ def evaluate(data, market, rows, refresh_runs, deploy_runs, main_sha, main_at, s
     else:
         problems.extend(check_projections(rows))
     problems.extend(check_refresh(refresh_runs, now))
-    problems.extend(check_deploy(deploy_runs, main_sha, main_at, now))
+    problems.extend(check_deploy(deploy_runs, main_sha, main_at, now, site_changed=site_changed))
     problems.extend(check_site(site_status, live_ver, repo_ver, error=site_error))
     return problems
 
@@ -650,9 +708,11 @@ def collect_live(repo, now):
     deploy_runs = _load_runs('pages.yml', repo)
     commit = _main_commit(repo)
     main_at = parse_time(commit['date'])
+    site_changed = _site_changed(repo, deploy_runs, commit.get('sha'))
     problems = problems_fetch + evaluate(
         data, market, rows, refresh_runs, deploy_runs,
-        commit.get('sha'), main_at, site_status, live_ver, repo_ver, now, site_error=site_error,
+        commit.get('sha'), main_at, site_status, live_ver, repo_ver, now,
+        site_error=site_error, site_changed=site_changed,
     )
     return problems
 
