@@ -211,6 +211,10 @@
       posExp: num(t.posExp, 0.35),
       posYExp: num(t.posYExp, 0.3),
       vegasSkill: num(t.vegasSkill, 1),
+      // Full game script made quarterback error worse on most 2026 weeks.
+      // Half of that move keeps the script and lowers the miss. Skill positions
+      // stay on vegasSkill.
+      qbVegas: num(t.qbVegas, 0.5),
       pprBlend: num(t.pprBlend, 0),
       backupPull: num(t.backupPull, 0),
       snapBlend: num(t.snapBlend, SNAP_BLEND),
@@ -687,7 +691,7 @@
     const vg = vegasFor(game, pl.team, week, env);
     let itt = null;
     if (vg) {
-      const vw = pl.pos === 'QB' ? 1 : o.vegasSkill;
+      const vw = pl.pos === 'QB' ? o.qbVegas : o.vegasSkill;
       const damp = m => 1 + (m - 1) * vw;
       const passS = damp(clamp(1 - 0.008 * vg.margin, 0.92, 1.08) * vg.paceF), rushS = damp(clamp(1 + 0.008 * vg.margin, 0.92, 1.08) * vg.paceF);
       for (const key of ['pa', 'py', 'ptd', 'int', 'tg', 'rc', 'rcy', 'rctd']) C[key] *= passS;
