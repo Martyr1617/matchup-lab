@@ -756,6 +756,17 @@ def main():
         print('prior profiles', 0)
     roles = build_roles(g, pd.read_csv(D + 'injuries_2026.csv'), D + 'depth_2026.csv', SEASON)
     print('role weeks', len(roles))
+    # Sleeper's current injury tag is the one the app has between injury reports.
+    # Put those players on this week's out list so the next man up is the starter.
+    sit_status = {'out', 'ir', 'injured reserve', 'injury reserve', 'pup', 'suspended', 'sus', 'doubtful', 'inactive'}
+    wk_key = str(NEXT_WEEK)
+    bucket = roles.setdefault(wk_key, {'out': [], 'chart': {}})
+    outs = {str(pid) for pid in (bucket.get('out') or [])}
+    for pl in players:
+        status = str((pl.get('sl_inj') or {}).get('status') or '').strip().lower()
+        if status in sit_status or 'reserve' in status:
+            outs.add(str(pl['id']))
+    bucket['out'] = sorted(outs)
     adv, team_ctx, avail = build_advanced.build(CUR_WEEK, players, season=SEASON)
     for pl in players:
         pl['adv'] = adv.get(pl['id'])

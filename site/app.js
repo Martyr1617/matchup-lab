@@ -555,6 +555,20 @@
     }
     box.innerHTML = items.map(newsCard).join('');
   }
+  async function refreshAvailability(includeSleeper) {
+    if (!state.data || !window.MLModel || !window.MLModel.applyAvailability) return;
+    try {
+      const jobs = [
+        fetch('https://site.api.espn.com/apis/site/v2/sports/football/nfl/injuries').then(r => r.ok ? r.json() : null).catch(() => null),
+      ];
+      if (includeSleeper) {
+        jobs.push(fetch('https://api.sleeper.app/v1/players/nfl').then(r => r.ok ? r.json() : null).catch(() => null));
+      }
+      const got = await Promise.all(jobs);
+      const n = window.MLModel.applyAvailability(state.data, got[1] || null, got[0]);
+      if (n && booted) rerender();
+    } catch (e) { /* keep the hourly injury tags */ }
+  }
   async function loadPracticeReports() {
     if (!window.MLTrade || !window.MLTrade.applyPractice || !state.data) return;
     try {
@@ -1510,6 +1524,9 @@
       let roster = true;
       if (booted) {
         fillWeeks(true);
+        // A starter ruled out after the hourly file still has to move his
+        // carries to the next player before the lineup is drawn.
+        await refreshAvailability(!silent);
         // Opening the app loads the Sleeper roster. The button used to skip
         // that and redraw the lineup already in memory, so a change on Sleeper
         // stayed put until the app was closed. Reload it the same way, unless
@@ -1567,6 +1584,7 @@
     bindAutoRefresh();
     loadLiveInjuries();
     loadPracticeReports();
+    refreshAvailability(false);
     window.ML = { state, SCORING, weatherChip, weatherText, loadWeather, injuryOf, isOut, project, makeDist, gameFor, f1, f2, pct, esc, avatar, statusFlag, newsBadge, hasInjuryNews, openPlayer, rkOrd, fmtKick, tn, setView, compareRows, compareTable, renderNews, renderBoard, refreshData };
     if (window.MLTrade && saved && saved.trade && window.MLTrade.restore) window.MLTrade.restore(saved.trade);
     const teamReady = window.MLTeam ? window.MLTeam.init() : null;
