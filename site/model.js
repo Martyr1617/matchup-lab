@@ -325,8 +325,9 @@
       if (thin && id === active && (Number(w[thin[0]]) || 0) < thin[1]) {
         const key = thin[0];
         let best = Number(w[key]) || 0;
-        for (const pid of chart) {
-          if (pid === id || !chartGone(pid, week, data)) continue;
+        const ahead = chart.slice(0, chart.indexOf(id));
+        for (const pid of ahead) {
+          if (!chartGone(pid, week, data)) continue;
           const mate = mates.get(pid);
           const v = mate && priorWeighted(mate, week, key, tune);
           if (v != null && v > best) best = v;
@@ -987,23 +988,6 @@
         }
         const order = Number(sp.depth_chart_order);
         if (order > 0) pl.depth = order;
-      }
-      const byId = playersById(data);
-      for (const team of Object.keys(roles.chart || {})) {
-        for (const pos of Object.keys(roles.chart[team] || {})) {
-          const ids = roles.chart[team][pos].map(String);
-          const known = ids.filter(id => {
-            const pl = byId.get(id);
-            return pl && pl.depth > 0;
-          });
-          if (known.length < 2) continue;
-          ids.sort((a, b) => {
-            const da = (byId.get(a) && byId.get(a).depth) || 50;
-            const db = (byId.get(b) && byId.get(b).depth) || 50;
-            return da - db || (a < b ? -1 : 1);
-          });
-          roles.chart[team][pos] = ids;
-        }
       }
     }
     for (const club of (espn && espn.injuries) || []) {

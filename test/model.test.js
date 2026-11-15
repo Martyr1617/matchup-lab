@@ -513,7 +513,8 @@ test('an injured starter hands his carries to the next back, and a healthy start
   const { applyAvailability } = require('../site/model');
   const moved = applyAvailability(healthyEnv.data, { next: { injury_status: null, depth_chart_order: 1 }, starter: { injury_status: 'IR', injury_body_part: 'Knee', depth_chart_order: 2 } }, null);
   assert.ok(moved >= 1);
-  assert.equal(healthyEnv.data.roles[6].chart.BUF.RB[0], 'next');
+  assert.equal(healthyEnv.data.players.find(p => p.id === 'starter').sl_inj.status, 'IR');
+  assert.ok(healthyEnv.data.roles[6].out.includes('starter'));
 });
 
 test('a third running back behind healthy starters does not keep a starter line', () => {
