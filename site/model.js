@@ -281,18 +281,27 @@
     return fallback;
   }
 
+  // Out, IR, PUP, suspended, and doubtful are not the starter this week.
+  // Sleeper's injury tag counts even when the weekly nflverse list missed it.
+  function chartGone(pid, week, data) {
+    const mate = playersById(data).get(String(pid));
+    if (mate && playChance(mate, week, data) < 0.5) return true;
+    const roles = data.roles && (data.roles[String(week)] || data.roles[week]);
+    return ((roles && roles.out) || []).map(String).includes(String(pid));
+  }
+
   // Depth chart + injury report for this week. No roles in the file means the
   // published volume is used as-is, so an older data bundle still projects.
   function roleVolume(pl, week, data, tune) {
     const w = { ...(pl.w || {}) };
-    const roles = data.roles && data.roles[String(week)];
+    const roles = data.roles && (data.roles[String(week)] || data.roles[week]);
     if (!roles || !pl.team || pl.id == null) return w;
     const chart = (((roles.chart || {})[pl.team] || {})[pl.pos] || []).map(String);
     if (!chart.length) return w;
     const id = String(pl.id);
     if (!chart.includes(id)) return w;
     const ruledOut = new Set((roles.out || []).map(String));
-    const active = chart.find(pid => !ruledOut.has(pid));
+    const active = chart.find(pid => !chartGone(pid, week, data));
     if (!active) return w;
     const mates = playersById(data);
     if (pl.pos === 'QB') {
@@ -317,7 +326,7 @@
         const key = thin[0];
         let best = Number(w[key]) || 0;
         for (const pid of chart) {
-          if (pid === id || !ruledOut.has(pid)) continue;
+          if (pid === id || !chartGone(pid, week, data)) continue;
           const mate = mates.get(pid);
           const v = mate && priorWeighted(mate, week, key, tune);
           if (v != null && v > best) best = v;
@@ -944,5 +953,74 @@
     }
   }
 
-  return { SCORING, lgamma, gammaP, makeDist, PREDICTIVE_SPREAD, SNAP_BLEND, HEALTHY_SPREAD, ROLE_FLOOR_N, FULL_WORK_GAP, FULL_WORK_RATIO, DOUBTFUL_PLAY, project, fullWorkload, outcomeFloor, hurtStatus, thinRole, regRole, returnerReady, playChance, gameFor, weatherAdj, vegasFor, propsFor, propMean, boomBust, matchupGrade, normName, blend };
+  const LIVE_SIT = /^(out|ir|injured reserve|injury reserve|pup|sus|suspended|suspension|doubtful|inactive)$/i;
+
+  // Sleeper injury_status / depth_chart_order, then a game-day injury feed.
+  // Mutates the week chart so project() sees the same absence everywhere.
+  function applyAvailability(data, sleeper, espn) {
+    if (!data || !Array.isArray(data.players)) return 0;
+    const week = String(data.meta && data.meta.next_week);
+    if (!data.roles) data.roles = {};
+    const roles = data.roles[week] || (data.roles[week] = { out: [], chart: {} });
+    const out = new Set((roles.out || []).map(String));
+    let n = 0;
+    const byEspn = new Map();
+    const byName = new Map();
+    for (const pl of data.players) {
+      if (pl.ids && pl.ids.espn) byEspn.set(String(pl.ids.espn), pl);
+      if (pl.name) byName.set(normName(pl.name), pl);
+    }
+    if (sleeper) {
+      for (const pl of data.players) {
+        const sp = pl.ids && pl.ids.sl && sleeper[pl.ids.sl];
+        if (!sp) continue;
+        const status = sp.injury_status || '';
+        if (LIVE_SIT.test(status)) {
+          const prev = pl.sl_inj && pl.sl_inj.status;
+          pl.sl_inj = { status, body: sp.injury_body_part || (pl.sl_inj && pl.sl_inj.body) || null };
+          out.add(String(pl.id));
+          if (prev !== status) n += 1;
+        } else if (!status && pl.sl_inj && LIVE_SIT.test(pl.sl_inj.status)) {
+          pl.sl_inj = null;
+          out.delete(String(pl.id));
+          n += 1;
+        }
+        const order = Number(sp.depth_chart_order);
+        if (order > 0) pl.depth = order;
+      }
+      const byId = playersById(data);
+      for (const team of Object.keys(roles.chart || {})) {
+        for (const pos of Object.keys(roles.chart[team] || {})) {
+          const ids = roles.chart[team][pos].map(String);
+          const known = ids.filter(id => {
+            const pl = byId.get(id);
+            return pl && pl.depth > 0;
+          });
+          if (known.length < 2) continue;
+          ids.sort((a, b) => {
+            const da = (byId.get(a) && byId.get(a).depth) || 50;
+            const db = (byId.get(b) && byId.get(b).depth) || 50;
+            return da - db || (a < b ? -1 : 1);
+          });
+          roles.chart[team][pos] = ids;
+        }
+      }
+    }
+    for (const club of (espn && espn.injuries) || []) {
+      for (const row of club.injuries || []) {
+        const status = row.status || '';
+        if (!LIVE_SIT.test(status)) continue;
+        const ath = row.athlete || {};
+        const pl = (ath.id && byEspn.get(String(ath.id))) || byName.get(normName(ath.displayName || ''));
+        if (!pl) continue;
+        pl.sl_inj = { status, body: (row.details && row.details.type) || (pl.sl_inj && pl.sl_inj.body) || null };
+        out.add(String(pl.id));
+        n += 1;
+      }
+    }
+    roles.out = Array.from(out);
+    return n;
+  }
+
+  return { SCORING, lgamma, gammaP, makeDist, PREDICTIVE_SPREAD, SNAP_BLEND, HEALTHY_SPREAD, ROLE_FLOOR_N, FULL_WORK_GAP, FULL_WORK_RATIO, DOUBTFUL_PLAY, project, fullWorkload, outcomeFloor, hurtStatus, thinRole, regRole, returnerReady, playChance, applyAvailability, gameFor, weatherAdj, vegasFor, propsFor, propMean, boomBust, matchupGrade, normName, blend };
 });

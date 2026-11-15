@@ -479,6 +479,43 @@ test('out, IR, PUP, and suspended project zero, and doubtful is a small fraction
   assert.equal(fullWorkload({ ...qb, sl_inj: { status: 'Out' } }, 6, 'ppr', env()), null);
 });
 
+test('an injured starter hands his carries to the next back, and a healthy starter does not', () => {
+  const e = env();
+  e.data.roles = { 6: { out: [], chart: { BUF: { RB: ['starter', 'next', 'deep'] } } } };
+  const pack = (id, ca, inj) => ({
+    id, name: id, pos: 'RB', team: 'BUF', g: 4, cv: 0.45,
+    ids: { sl: id },
+    sl_inj: inj ? { status: inj } : null,
+    w: { pa: 0, py: 0, ptd: 0, int: 0, ca, ry: ca * 4, rtd: 0.3, tg: 3, rc: 2, rcy: 12, rctd: 0.1 },
+    t: { pa: 0, py: 0, ptd: 0, int: 0, ca: ca * 4, ry: ca * 16, rtd: 1, tg: 12, rc: 8, rcy: 48, rctd: 0, fl: 0, two: 0 },
+    log: [1, 2, 3, 4].map(wk => ({ wk, ca, tg: 3, pa: 0 })),
+  });
+  const starter = pack('starter', 18, 'Out');
+  const next = pack('next', 3, null);
+  const deep = pack('deep', 8, null);
+  e.data.players = [starter, next, deep];
+  const lead = project(next, 6, 'ppr', e);
+  const buried = project(deep, 6, 'ppr', e);
+  const sit = project(starter, 6, 'ppr', e);
+  assert.equal(sit.pts, 0);
+  assert.ok(lead.comps.ca > 12, 'next carries ' + lead.comps.ca);
+  assert.ok(lead.pts > 8, 'next pts ' + lead.pts);
+  assert.ok(buried.comps.ca < lead.comps.ca, 'deep ' + buried.comps.ca);
+  const healthyEnv = env();
+  healthyEnv.data.meta = { next_week: 6, season: 2026 };
+  healthyEnv.data.roles = { 6: { out: [], chart: { BUF: { RB: ['starter', 'next', 'deep'] } } } };
+  const healthy = pack('starter', 18, null);
+  const backup = pack('next', 3, null);
+  const third = pack('deep', 8, null);
+  healthyEnv.data.players = [healthy, backup, third];
+  const capped = project(backup, 6, 'ppr', healthyEnv);
+  assert.ok(capped.comps.ca < 8, 'healthy backup ' + capped.comps.ca);
+  const { applyAvailability } = require('../site/model');
+  const moved = applyAvailability(healthyEnv.data, { next: { injury_status: null, depth_chart_order: 1 }, starter: { injury_status: 'IR', injury_body_part: 'Knee', depth_chart_order: 2 } }, null);
+  assert.ok(moved >= 1);
+  assert.equal(healthyEnv.data.roles[6].chart.BUF.RB[0], 'next');
+});
+
 test('a third running back behind healthy starters does not keep a starter line', () => {
   const e = env();
   e.data.roles = { 6: { out: [], chart: { BUF: { RB: ['rb1', 'rb2', 'rb3'] } } } };
